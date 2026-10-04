@@ -1,0 +1,2939 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Kingdom Spin</title>
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:rgba(0,0,0,0.55);
+      --text:#f5f7ff;
+      --accent:#ffd24a;
+      --danger:#ff5c5c;
+      --good:#59ffa0;
+    }
+    *{ box-sizing:border-box; }
+
+    html, body{
+      height:100%;
+      overscroll-behavior-y:none;
+      -webkit-text-size-adjust:100%;
+    }
+
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      background:var(--bg);
+      color:var(--text);
+
+      /* Flex column so .stage always fills the remaining vertical space no matter
+         how tall .panel ends up (Kingdom Clash gotcha #2 — no magic-number layout). */
+      height:100svh;
+      min-height:100svh;
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+      -webkit-overflow-scrolling:touch;
+    }
+
+    .stage{
+      position:relative;
+      flex:1 1 auto;
+      min-height:0; /* required so flex child can shrink below content size */
+      display:grid;
+      place-items:center;
+      padding:clamp(6px, 1vw, 14px) 16px 10px;
+      padding-left:max(16px, env(safe-area-inset-left));
+      padding-right:max(16px, env(safe-area-inset-right));
+      padding-bottom:max(10px, env(safe-area-inset-bottom));
+    }
+
+    .bg{
+      position:absolute;
+      inset:0;
+      z-index:0;
+      pointer-events:none;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.65)),
+        url("castle.jpg");
+      background-size:cover;
+      background-position:center;
+      filter:saturate(1.05);
+      transform:scale(1.02);
+    }
+    .bg::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:radial-gradient(circle at 50% 40%, transparent 0 55%, rgba(0,0,0,0.35) 75%, rgba(0,0,0,0.7) 100%);
+    }
+
+    /* ===== WHEEL ===== */
+    .wheel-wrap{
+      position:relative;
+      z-index:1;
+      width:min(96vw, 1440px);
+      height:100%;
+      min-height:0;
+      display:grid;
+      place-items:center;
+    }
+    /* The SVG's viewBox + default preserveAspectRatio do the fitting — the wheel
+       is always the largest circle the stage can hold. */
+    #wheelSvg{
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      overflow:visible;
+      filter:drop-shadow(0 18px 30px rgba(0,0,0,0.55));
+      user-select:none;
+      -webkit-user-select:none;
+    }
+    .wedge{ transform-origin:0 0; transition:opacity 0.25s ease; }
+    .wedge .wedgeFill{ stroke:rgba(255,255,255,0.85); stroke-width:3; stroke-linejoin:round; }
+    .wedge .wedgeFlash{ fill:#fff; opacity:0; pointer-events:none; }
+    .wedgeText{
+      font-family:Impact, "Arial Narrow Bold", "Arial Black", system-ui, sans-serif;
+      text-anchor:middle;
+      paint-order:stroke;
+      stroke:rgba(0,0,0,0.55);
+      stroke-width:5;
+      stroke-linejoin:round;
+      letter-spacing:1px;
+    }
+    .wedgeEmoji{ text-anchor:middle; }
+
+    /* Landed wedge: everything else dims, the winner pops + strobes */
+    #wheelRot.hasLanded .wedge:not(.landed){ opacity:0.38; }
+    .wedge.landed{ animation:landPop 0.5s cubic-bezier(.2,.9,.3,1.4); }
+    .wedge.landed .wedgeFill{ stroke:#fff; stroke-width:7; }
+    .wedge.landed .wedgeFlash{ animation:landFlash 0.5s ease-out, landPulse 0.9s ease-in-out 0.5s infinite; }
+    @keyframes landPop{
+      0%{ transform:scale(1); }
+      30%{ transform:scale(1.07); }
+      100%{ transform:scale(1); }
+    }
+    @keyframes landFlash{ 0%{ opacity:0.95; } 100%{ opacity:0; } }
+    @keyframes landPulse{ 0%,100%{ opacity:0; } 50%{ opacity:0.28; } }
+
+    /* Pointer / flapper — pivots around its mounting pin (local 0,0) */
+    #pointer{ transform-origin:0 0; }
+    #pointer.ticking{ animation:ptrTick 0.11s linear infinite; }
+    @keyframes ptrTick{
+      0%,100%{ transform:rotate(0deg); }
+      50%{ transform:rotate(-10deg); }
+    }
+    #pointer.flick{ animation:ptrFlick 0.55s cubic-bezier(.2,.9,.3,1); }
+    @keyframes ptrFlick{
+      0%{ transform:rotate(-30deg) scale(1.25); }
+      30%{ transform:rotate(15deg) scale(1.1); }
+      55%{ transform:rotate(-8deg) scale(1); }
+      78%{ transform:rotate(3deg); }
+      100%{ transform:rotate(0deg); }
+    }
+    #hub{ transform-origin:0 0; }
+    #hub.thump{ animation:hubThump 0.4s cubic-bezier(.2,.85,.2,1); }
+    @keyframes hubThump{ 0%{ transform:scale(1.28); } 100%{ transform:scale(1); } }
+
+    /* Rim bulbs — negative delays so they twinkle out of phase from frame one
+       (Kingdom Clash gotcha #9) */
+    .bulb{ animation:bulb var(--bulb-dur, 1.6s) ease-in-out infinite; animation-delay:var(--bulb-delay, 0s); }
+    @keyframes bulb{ 0%,100%{ opacity:0.35; } 50%{ opacity:1; } }
+    body.spinning .bulb{ animation-duration:0.35s; }
+
+    /* Hard-stop micro screen-shake */
+    body.stopShake .stage{ animation:stopShake 0.24s ease-out; }
+    @keyframes stopShake{
+      0%{ transform:translate(0,0); }
+      15%{ transform:translate(5px,-4px); }
+      35%{ transform:translate(-5px,3px); }
+      55%{ transform:translate(3px,3px); }
+      75%{ transform:translate(-2px,-2px); }
+      100%{ transform:translate(0,0); }
+    }
+
+    .panel{
+      flex:0 0 auto; /* fixed-size row in the body flex — .stage below takes the rest */
+      position:relative;
+      z-index:2;
+      background:var(--panel);
+      padding:clamp(8px, 1.2vw, 16px) clamp(12px, 1.6vw, 22px);
+      display:grid;
+      gap:clamp(8px, 1.2vw, 18px);
+      align-items:center;
+      padding-top:max(clamp(8px, 1.2vw, 16px), env(safe-area-inset-top));
+      padding-bottom:clamp(10px, 1.4vw, 18px);
+      padding-left:max(clamp(12px, 1.6vw, 22px), env(safe-area-inset-left));
+      padding-right:max(clamp(12px, 1.6vw, 22px), env(safe-area-inset-right));
+      border-bottom:1px solid rgba(255,255,255,0.08);
+      max-height:60svh;
+      overflow-y:auto;
+    }
+    .panel.teams-2 { grid-template-columns: 1fr 1fr auto; }
+    .panel.teams-3 { grid-template-columns: 1fr 1fr 1fr auto; }
+    .panel.teams-4 { grid-template-columns: 1fr 1fr 1fr 1fr auto; }
+    .panel.teams-2 .teamBox-C,
+    .panel.teams-2 .teamBox-D,
+    .panel.teams-3 .teamBox-D { display: none !important; }
+
+    /* Stack team name over score so the name never competes with the score for
+       horizontal room (prevents mid-word wraps at 4 teams). */
+    .team{
+      position:relative;
+      display:flex;
+      flex-direction:column;
+      align-items:flex-start;
+      justify-content:center;
+      gap:2px;
+      padding:clamp(8px, 1.2vw, 14px) clamp(12px, 1.6vw, 18px);
+      border-radius:14px;
+      background:rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.12);
+      min-width:0;
+      overflow:hidden;
+    }
+    .team h2{
+      margin:0;
+      max-width:100%;
+      font-size:clamp(13px, 1.6vw, 22px);
+      opacity:0.85;
+      font-weight:700;
+      letter-spacing:0.3px;
+      line-height:1.15;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .score{
+      font-size:clamp(26px, 3.6vw, 52px);
+      font-weight:1000;
+      color:var(--accent);
+      line-height:1;
+      font-variant-numeric:tabular-nums;
+    }
+
+    /* 🛡️ Shield badge */
+    .shieldBadge{
+      position:absolute;
+      top:4px;
+      right:8px;
+      font-size:clamp(13px, 1.5vw, 22px);
+      line-height:1;
+      filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));
+    }
+    .shieldBadge:empty{ display:none; }
+    .shieldBadge.phShield{
+      position:static;
+      font-size:clamp(14px, 1.8vw, 26px);
+      margin-left:4px;
+    }
+
+    .controls{
+      display:grid;
+      gap:8px;
+      justify-items:end;
+      min-width:clamp(260px, 30vw, 420px);
+    }
+    /* The three turn-critical buttons: big, always in reach */
+    .bigBtnRow{
+      display:grid;
+      grid-template-columns:1.25fr 1fr 1fr;
+      gap:6px;
+      width:100%;
+    }
+    .bigBtnRow > button{
+      padding:12px 6px;
+      font-size:clamp(13px, 1.25vw, 18px);
+      font-weight:1000;
+      min-width:0;
+      white-space:nowrap;
+    }
+    #spinBtn{ background:rgba(89,255,160,0.20); border-color:rgba(89,255,160,0.5); color:#b9ffd8; }
+    #spinBtn:hover:not(:disabled){ background:rgba(89,255,160,0.30); }
+    #stopBtn{ background:rgba(255,92,92,0.22); border-color:rgba(255,92,92,0.55); color:#ffc9c9; }
+    #stopBtn:hover:not(:disabled){ background:rgba(255,92,92,0.34); }
+    #toggleTeamBtn{ background:rgba(255,210,74,0.18); border-color:rgba(255,210,74,0.45); color:var(--accent); }
+    #toggleTeamBtn:hover:not(:disabled){ background:rgba(255,210,74,0.28); }
+    .controlBtnRow{
+      display:grid;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+      gap:6px;
+      width:100%;
+    }
+    .controlBtnRow > button{
+      padding:8px 6px;
+      font-size:clamp(11px, 1vw, 14px);
+      min-width:0;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    kbd{
+      font:inherit;
+      font-size:0.78em;
+      opacity:0.75;
+      padding:1px 5px;
+      border-radius:5px;
+      border:1px solid currentColor;
+      margin-left:4px;
+    }
+
+    button{
+      border-radius:12px;
+      padding:10px 12px;
+      font-weight:900;
+      cursor:pointer;
+      background:rgba(255,255,255,0.14);
+      color:var(--text);
+      border:1px solid rgba(255,255,255,0.22);
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button:hover{ background:rgba(255,255,255,0.18); }
+    button:active{ transform:scale(0.99); }
+    button:disabled{ opacity:0.45; cursor:not-allowed; }
+
+    .activeBadge{
+      display:inline-block;
+      padding:6px 10px;
+      border-radius:999px;
+      font-weight:900;
+      background:rgba(255,210,74,0.18);
+      border:1px solid rgba(255,210,74,0.35);
+      color:var(--accent);
+      justify-self:end;
+    }
+
+    .log{
+      font-size:14px;
+      opacity:0.92;
+      text-align:right;
+      line-height:1.25;
+      min-height:1.25em;
+    }
+
+    @media (max-width:800px){
+      .panel.teams-2,
+      .panel.teams-3,
+      .panel.teams-4 { grid-template-columns:1fr; }
+      .controls{ justify-items:stretch; min-width:0; }
+      .log{ text-align:left; }
+    }
+
+    /* Generic picker button grid — auto-fits 2..4 buttons */
+    .pickerBtnGrid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));
+      gap:10px;
+    }
+    .pickerBtnGrid > button{
+      padding:22px 12px;
+      font-size:18px;
+      font-weight:1000;
+    }
+    .presenter-hud.teams-2 .phTeamBox-C,
+    .presenter-hud.teams-2 .phTeamBox-D,
+    .presenter-hud.teams-2 .ph-vs-BC,
+    .presenter-hud.teams-2 .ph-vs-CD,
+    .presenter-hud.teams-3 .phTeamBox-D,
+    .presenter-hud.teams-3 .ph-vs-CD { display:none !important; }
+
+    /* OVERLAYS */
+    .overlay{
+      position:fixed;
+      inset:0;
+      display:grid;
+      place-items:center;
+      background:rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px);
+      z-index:9999;
+      padding:16px;
+      touch-action: manipulation;
+    }
+    /* !important — otherwise any later equal-specificity display rule wins
+       (Kingdom Clash gotcha #1) */
+    .hidden{ display:none !important; }
+
+    .card{
+      width:min(92vw, 560px);
+      max-height:92svh;
+      overflow-y:auto;
+      border-radius:22px;
+      background:rgba(15, 18, 32, 0.94);
+      border:1px solid rgba(255,255,255,0.18);
+      box-shadow:0 20px 70px rgba(0,0,0,0.55);
+      padding:16px 16px 14px;
+      display:grid;
+      gap:12px;
+      transform:scale(0.96);
+      opacity:0;
+      animation:popIn 220ms ease forwards;
+    }
+    @keyframes popIn{ to { transform:scale(1); opacity:1; } }
+
+    /* Start overlay */
+    .startHero{
+      display:grid;
+      gap:8px;
+      text-align:center;
+      padding:16px 14px 12px;
+      border-radius:18px;
+      background:linear-gradient(180deg, rgba(255,210,74,0.18), rgba(255,210,74,0.06));
+      border:1px solid rgba(255,210,74,0.28);
+    }
+    .startTitle{
+      font-weight:1000;
+      font-size:clamp(26px, 5vw, 42px);
+      letter-spacing:0.3px;
+    }
+    .startSub{ opacity:0.92; font-weight:800; line-height:1.3; font-size:14px; }
+    .startBtn{
+      width:100%;
+      padding:16px 16px;
+      border-radius:18px;
+      font-weight:1000;
+      font-size:18px;
+      background:rgba(255,210,74,0.25);
+      border:1px solid rgba(255,210,74,0.44);
+    }
+    .startRow{ display:flex; gap:10px; align-items:center; justify-content:center; flex-wrap:wrap; }
+    .smallNote{ opacity:0.86; font-size:13px; line-height:1.3; }
+
+    /* POPUP */
+    #overlay .card{ width:min(94vw, 780px); }
+    .popupTop{ display:grid; gap:6px; justify-items:center; margin-bottom:10px; }
+    .popupTitle{
+      font-weight:1000;
+      font-size:clamp(34px, 5.5vw, 72px);
+      letter-spacing:0.5px;
+      text-align:center;
+      line-height:1.1;
+      max-width:100%;
+      overflow-wrap:break-word;
+    }
+    .popupSub{
+      opacity:0.9;
+      font-weight:900;
+      text-align:center;
+      font-size:clamp(15px, 2.2vw, 26px);
+      max-width:100%;
+      overflow-wrap:break-word;
+    }
+    .popupAnim{
+      position:relative;
+      height:clamp(220px, 42svh, 460px);
+      border-radius:18px;
+      background:rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.10);
+      overflow:hidden;
+      display:grid;
+      place-items:center;
+    }
+    .popupImg{
+      width:min(88%, 460px);
+      /* svh (not %) — % hits the auto-sized-grid-track circular dependency
+         (Kingdom Clash gotcha #5) */
+      max-height:min(38svh, 420px);
+      height:auto;
+      object-fit:contain;
+      filter:drop-shadow(0 14px 18px rgba(0,0,0,0.45));
+      animation:imgPop 720ms cubic-bezier(.2,.85,.2,1) forwards;
+      transform-origin:50% 65%;
+      opacity:0;
+    }
+    .popupEmoji{
+      font-size:clamp(110px, 30svh, 220px);
+      line-height:1;
+      animation:imgPop 720ms cubic-bezier(.2,.85,.2,1) forwards;
+      opacity:0;
+    }
+    @keyframes imgPop{
+      0%{ transform:translateY(12px) scale(0.92); opacity:0; }
+      40%{ opacity:1; }
+      60%{ transform:translateY(-6px) scale(1.05); }
+      100%{ transform:translateY(0px) scale(1); opacity:1; }
+    }
+    .spark{ position:absolute; font-size:28px; animation:spark 750ms ease forwards; opacity:0; }
+    @keyframes spark{
+      0%{ transform:translate(var(--x), var(--y)) scale(0.7); opacity:0; }
+      18%{ opacity:1; }
+      100%{ transform:translate(var(--x), calc(var(--y) - 110px)) scale(1.35); opacity:0; }
+    }
+
+    /* STEAL POPUP */
+    .overlay.steal .card{
+      border-color:rgba(183,148,244,0.45);
+      box-shadow:0 0 50px rgba(183,148,244,0.2), 0 20px 70px rgba(0,0,0,0.55);
+    }
+    .pickerSkipBtn{
+      padding:14px 12px;
+      font-size:15px;
+      font-weight:900;
+      background:rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.22);
+      color:rgba(255,255,255,0.82);
+    }
+    .pickerSkipBtn:hover{ background:rgba(255,255,255,0.12); }
+
+    /* WINNER POPUP */
+    .overlay.winner .card{
+      width:min(96vw, 820px);
+      border-color:rgba(255,210,74,0.45);
+      box-shadow:0 0 80px rgba(255,210,74,0.25), 0 24px 80px rgba(0,0,0,0.7);
+    }
+    .overlay.winner .popupTitle{ font-size:clamp(46px, 9vw, 100px); }
+    .overlay.winner .popupSub{ font-size:clamp(18px, 2.5vw, 28px); opacity:1; font-weight:1000; }
+    .overlay.winner .popupAnim{ height:min(46vh, 440px); }
+    .overlay.winner .popupImg{ width:min(78%, 380px); }
+
+    /* SETTINGS */
+    .row{ display:flex; gap:10px; align-items:center; justify-content:space-between; }
+    .bigTitle{ font-weight:1000; font-size:18px; }
+    .sliderRow{ display:grid; gap:6px; padding:10px 12px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.10); }
+    .sliderTop{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+    .sliderLabel{ font-weight:900; opacity:0.92; }
+    .sliderVal{ font-weight:1000; color:var(--accent); }
+    input[type="range"]{ width:100%; }
+    .btnGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+    .btnGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+    /* FACE OFF TIMER */
+    .faceOffTimerRow{
+      display:grid;
+      grid-template-columns:1fr auto;
+      gap:14px;
+      align-items:center;
+      padding:6px 0 4px;
+    }
+    .faceOffStartBtn{
+      padding:14px 12px;
+      font-size:16px;
+      font-weight:1000;
+      background:rgba(255,210,74,0.18);
+      border:1px solid rgba(255,210,74,0.45);
+      color:#ffd24a;
+    }
+    .faceOffStartBtn:hover{ background:rgba(255,210,74,0.28); }
+    .faceOffTimer{
+      font-weight:1000;
+      font-size:48px;
+      color:#ffd24a;
+      min-width:120px;
+      text-align:center;
+      font-variant-numeric:tabular-nums;
+      text-shadow:0 0 12px rgba(255,210,74,0.45);
+      transition:color 0.2s ease;
+    }
+    .faceOffTimer.warn{ color:#e76f51; text-shadow:0 0 14px rgba(231,111,81,0.55); }
+    .faceOffTimer.done{
+      color:#e76f51; text-shadow:0 0 16px rgba(231,111,81,0.7);
+      font-size:34px;
+      animation:foDone 600ms ease;
+    }
+    @keyframes foDone{
+      0%{ transform:scale(0.7); opacity:0; }
+      60%{ transform:scale(1.15); opacity:1; }
+      100%{ transform:scale(1); opacity:1; }
+    }
+    .popupCountdown{
+      font-weight:1000;
+      font-size:clamp(120px, 22vw, 240px);
+      color:#ffd24a;
+      text-align:center;
+      line-height:1;
+      font-variant-numeric:tabular-nums;
+      text-shadow:0 0 28px rgba(255,210,74,0.5);
+      transition:color 0.2s ease, text-shadow 0.2s ease, font-size 0.2s ease;
+    }
+    .popupCountdown.warn{ color:#e76f51; text-shadow:0 0 32px rgba(231,111,81,0.7); }
+    .popupCountdown.done{
+      color:#e76f51;
+      font-size:clamp(80px, 14vw, 160px);
+      text-shadow:0 0 36px rgba(231,111,81,0.85);
+    }
+    select{
+      width:100%;
+      padding:10px 12px;
+      border-radius:12px;
+      background:rgba(255,255,255,0.10);
+      color:var(--text);
+      border:1px solid rgba(255,255,255,0.18);
+      font-weight:900;
+    }
+    option{ color:#000; }
+
+    /* ===== JUICE ===== */
+    .team.activeGlow{
+      border-color:rgba(255,210,74,0.6);
+      animation:teamGlow 1.6s ease-in-out infinite;
+    }
+    .ph-team.activeGlow{
+      border-radius:12px;
+      padding:2px 10px;
+      animation:teamGlow 1.6s ease-in-out infinite;
+    }
+    @keyframes teamGlow{
+      0%,100%{ box-shadow:0 0 6px rgba(255,210,74,0.25); }
+      50%{ box-shadow:0 0 20px rgba(255,210,74,0.6); }
+    }
+
+    .flyPoint{
+      position:fixed;
+      left:0; top:0;
+      z-index:99998;
+      font-weight:1000;
+      font-size:clamp(20px, 3vw, 42px);
+      color:var(--accent);
+      text-shadow:0 2px 10px rgba(0,0,0,0.65);
+      pointer-events:none;
+      will-change:transform, opacity;
+    }
+
+    body.bankruptFx .stage,
+    body.bankruptFx .panel{ animation:quake 0.5s ease; }
+    @keyframes quake{
+      0%,100%{ transform:translate(0,0); }
+      20%{ transform:translate(-9px,5px); }
+      40%{ transform:translate(8px,-6px); }
+      60%{ transform:translate(-7px,-4px); }
+      80%{ transform:translate(6px,5px); }
+    }
+    .redFlash{
+      position:fixed; inset:0;
+      z-index:99997;
+      pointer-events:none;
+      background:radial-gradient(circle at 50% 45%, rgba(231,76,60,0.30), rgba(160,30,25,0.55));
+      animation:redFlash 0.65s ease forwards;
+    }
+    @keyframes redFlash{ 0%{opacity:0;} 30%{opacity:1;} 100%{opacity:0;} }
+
+    .overlay.heartbeat{ animation:heartbeatBg 1s ease-in-out infinite; }
+    @keyframes heartbeatBg{
+      0%,100%{ background:rgba(0,0,0,0.65); }
+      50%{ background:rgba(140,22,22,0.62); }
+    }
+
+    /* PRESENTER MODE — panel hidden, stage takes the whole viewport minus the HUD */
+    body.present-mode{ cursor:none; overflow:hidden; height:100svh; }
+    body.present-mode .panel{ display:none !important; }
+    body.present-mode .stage{
+      padding:92px 0 10px; /* room for the fixed 82px HUD */
+      height:100svh;
+      overflow:hidden;
+    }
+    body.present-mode .wheel-wrap{ width:98vw; }
+
+    .presenter-hud{
+      position:absolute;
+      top:0; left:0; right:0;
+      height:82px;
+      z-index:5;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:0 40px;
+      background:rgba(0,0,0,0.62);
+      backdrop-filter:blur(12px);
+      border-bottom:1px solid rgba(255,255,255,0.10);
+    }
+    .ph-team{ display:flex; align-items:center; gap:22px; }
+    .ph-name{ font-weight:900; font-size:clamp(16px, 2.4vw, 36px); opacity:0.92; }
+    .ph-score{ font-weight:1000; font-size:clamp(22px, 4vw, 60px); color:var(--accent); font-variant-numeric:tabular-nums; }
+    .ph-vs{ font-size:clamp(18px, 2.2vw, 28px); opacity:0.45; }
+    .presenter-hud.teams-3 .ph-name  { font-size:clamp(14px, 2vw, 30px); }
+    .presenter-hud.teams-3 .ph-score { font-size:clamp(20px, 3.4vw, 52px); }
+    .presenter-hud.teams-4 .ph-name  { font-size:clamp(12px, 1.7vw, 26px); }
+    .presenter-hud.teams-4 .ph-score { font-size:clamp(18px, 2.9vw, 44px); }
+
+    #presentBtn{ background:rgba(56,189,153,0.18); border-color:rgba(56,189,153,0.38); }
+    #presentBtn:hover{ background:rgba(56,189,153,0.28); }
+    #presentBtn.live{ background:rgba(56,189,153,0.30); border-color:rgba(56,189,153,0.60); }
+  </style>
+</head>
+
+<body>
+  <div class="panel teams-2" id="mainPanel">
+    <div class="team teamBox-A">
+      <div><h2 contenteditable="true" id="teamAName">Team A</h2></div>
+      <div class="score" id="teamAScore">0</div>
+      <div class="shieldBadge" id="teamAShield"></div>
+    </div>
+    <div class="team teamBox-B">
+      <div><h2 contenteditable="true" id="teamBName">Team B</h2></div>
+      <div class="score" id="teamBScore">0</div>
+      <div class="shieldBadge" id="teamBShield"></div>
+    </div>
+    <div class="team teamBox-C">
+      <div><h2 contenteditable="true" id="teamCName">Team C</h2></div>
+      <div class="score" id="teamCScore">0</div>
+      <div class="shieldBadge" id="teamCShield"></div>
+    </div>
+    <div class="team teamBox-D">
+      <div><h2 contenteditable="true" id="teamDName">Team D</h2></div>
+      <div class="score" id="teamDScore">0</div>
+      <div class="shieldBadge" id="teamDShield"></div>
+    </div>
+
+    <div class="controls">
+      <div class="activeBadge" id="activeTeamBadge">Active: Team A</div>
+      <div class="bigBtnRow">
+        <button id="spinBtn" type="button" disabled>🎡 SPIN <kbd>Space</kbd></button>
+        <button id="stopBtn" type="button" disabled>🛑 STOP</button>
+        <button id="toggleTeamBtn" type="button" disabled>🔀 Toggle Team</button>
+      </div>
+      <div class="controlBtnRow">
+        <button id="undoBtn" type="button" disabled>Undo</button>
+        <button id="settingsBtn" type="button" disabled>Settings</button>
+        <button id="presentBtn" type="button" disabled>📺 Present</button>
+      </div>
+      <div class="log" id="log">Tap Start Game, then spin the wheel.</div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="bg" aria-hidden="true"></div>
+    <div class="wheel-wrap">
+      <svg id="wheelSvg" viewBox="-530 -590 1060 1125" aria-label="Prize wheel">
+        <defs>
+          <radialGradient id="sheen" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#fff" stop-opacity="0.16"/>
+            <stop offset="55%" stop-color="#fff" stop-opacity="0"/>
+            <stop offset="88%" stop-color="#000" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#000" stop-opacity="0.32"/>
+          </radialGradient>
+          <linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#ffe9a3"/>
+            <stop offset="55%" stop-color="#ffd24a"/>
+            <stop offset="100%" stop-color="#b8860b"/>
+          </linearGradient>
+        </defs>
+        <circle r="512" fill="#1a1325" stroke="url(#goldGrad)" stroke-width="10"/>
+        <g id="bulbs"></g>
+        <g id="wheelRot">
+          <g id="wedgeLayer"></g>
+          <g id="shardLayer"></g>
+        </g>
+        <circle r="482" fill="url(#sheen)" pointer-events="none"/>
+        <g id="hub">
+          <circle r="64" fill="url(#goldGrad)" stroke="#5c4300" stroke-width="5"/>
+          <text y="20" font-size="58" text-anchor="middle">👑</text>
+        </g>
+        <!-- Fixed pointer at 12 o'clock. Outer <g> positions the pivot; the inner
+             #pointer animates around its own local origin. -->
+        <g transform="translate(0,-556)">
+          <g id="pointer">
+            <path d="M -40 -8 L 40 -8 L 0 96 Z" fill="#ff4d4d" stroke="#fff" stroke-width="6" stroke-linejoin="round"/>
+            <circle r="15" cy="6" fill="url(#goldGrad)" stroke="#5c4300" stroke-width="4"/>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <!-- Presenter score HUD (visible only in present mode) -->
+    <div id="presenterHud" class="presenter-hud hidden teams-2">
+      <div class="ph-team phTeamBox-A">
+        <div class="ph-name" id="phTeamAName">Team A</div>
+        <div class="ph-score" id="phTeamAScore">0</div>
+        <span class="shieldBadge phShield" id="phTeamAShield"></span>
+      </div>
+      <div class="ph-vs ph-vs-AB">⚔️</div>
+      <div class="ph-team phTeamBox-B">
+        <div class="ph-name" id="phTeamBName">Team B</div>
+        <div class="ph-score" id="phTeamBScore">0</div>
+        <span class="shieldBadge phShield" id="phTeamBShield"></span>
+      </div>
+      <div class="ph-vs ph-vs-BC">⚔️</div>
+      <div class="ph-team phTeamBox-C">
+        <div class="ph-name" id="phTeamCName">Team C</div>
+        <div class="ph-score" id="phTeamCScore">0</div>
+        <span class="shieldBadge phShield" id="phTeamCShield"></span>
+      </div>
+      <div class="ph-vs ph-vs-CD">⚔️</div>
+      <div class="ph-team phTeamBox-D">
+        <div class="ph-name" id="phTeamDName">Team D</div>
+        <div class="ph-score" id="phTeamDScore">0</div>
+        <span class="shieldBadge phShield" id="phTeamDShield"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- START OVERLAY -->
+  <div id="startOverlay" class="overlay" aria-hidden="false">
+    <div class="card" role="dialog" aria-modal="true">
+      <div class="startHero">
+        <div class="startTitle">Kingdom Spin</div>
+        <div class="startSub">Spin the wheel — hit the buzzer to stop it.</div>
+      </div>
+      <div class="startRow">
+        <button id="startBtn" class="startBtn" type="button">START GAME</button>
+      </div>
+      <div class="smallNote" id="startHint"></div>
+    </div>
+  </div>
+
+  <!-- POPUP (no OK button; tap anywhere to dismiss) -->
+  <div id="overlay" class="overlay hidden" aria-hidden="true">
+    <div class="card" role="dialog" aria-modal="true">
+      <div class="popupTop">
+        <div id="popupTitle" class="popupTitle">+100</div>
+        <div id="popupSub" class="popupSub">points</div>
+      </div>
+      <div id="popupAnim" class="popupAnim"></div>
+    </div>
+  </div>
+
+  <!-- FACE OFF WINNER PICKER (operator only) -->
+  <div id="faceOffOverlay" class="overlay hidden" aria-hidden="true">
+    <div class="card" role="dialog" aria-modal="true">
+      <div class="popupTop">
+        <div class="popupTitle" style="color:#ffd24a;">⚔️ FACE OFF!</div>
+        <div class="popupSub">20-second challenge — tap the winner to award +2000</div>
+      </div>
+      <div class="faceOffTimerRow">
+        <button id="faceOffStartTimer" type="button" class="faceOffStartBtn">Start 20s Timer</button>
+        <div id="faceOffTimer" class="faceOffTimer">20</div>
+      </div>
+      <div id="faceOffPickerButtons" class="pickerBtnGrid" style="margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <!-- STEAL TARGET PICKER (operator only) -->
+  <div id="stealOverlay" class="overlay hidden" aria-hidden="true">
+    <div class="card" role="dialog" aria-modal="true">
+      <div class="popupTop">
+        <div class="popupTitle" style="color:#b794f4;">🐉 STEAL!</div>
+        <div class="popupSub" id="stealPickerSub">Pick a team to steal from — or skip</div>
+      </div>
+      <div id="stealPickerButtons" class="pickerBtnGrid" style="margin-top:6px;"></div>
+      <button id="stealSkipBtn" class="pickerSkipBtn" type="button">🚫 Skip — Don't Steal</button>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="settingsOverlay" class="overlay hidden" aria-hidden="true">
+    <div class="card" role="dialog" aria-modal="true">
+      <div class="row">
+        <div class="bigTitle">Kingdom Spin Settings</div>
+        <button id="closeSettingsBtn" type="button" style="padding:8px 10px;border-radius:12px;">Close</button>
+      </div>
+
+      <div class="sliderRow">
+        <div class="sliderTop">
+          <div class="sliderLabel">Wheel Size</div>
+          <div class="sliderVal" id="wheelSizeVal">20 wedges</div>
+        </div>
+        <select id="wheelSizeSelect">
+          <option value="20">20 wedges</option>
+          <option value="16">16 wedges</option>
+          <option value="12">12 wedges</option>
+        </select>
+        <div class="smallNote" style="opacity:.78;">Tap Apply to start a fresh wheel with your changes.</div>
+      </div>
+
+      <div class="sliderRow">
+        <div class="sliderTop">
+          <div class="sliderLabel">Number of Teams</div>
+          <div class="sliderVal" id="teamCountVal">2</div>
+        </div>
+        <select id="teamCountSelect">
+          <option value="2">2 Teams</option>
+          <option value="3">3 Teams</option>
+          <option value="4">4 Teams</option>
+        </select>
+      </div>
+
+      <div class="sliderRow">
+        <div class="sliderLabel" style="margin-bottom:4px;">Special Wedge Counts</div>
+        <div class="btnGrid2" style="gap:10px;">
+          <label style="display:grid; gap:4px;">
+            <span class="smallNote">💥 Bankrupt</span>
+            <select id="bankruptCountSelect">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+          </label>
+          <label style="display:grid; gap:4px;">
+            <span class="smallNote">✖️ x2 Double</span>
+            <select id="doubleCountSelect">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+          </label>
+          <label style="display:grid; gap:4px;">
+            <span class="smallNote">🐉 Steal</span>
+            <select id="stealCountSelect">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+          </label>
+          <label style="display:grid; gap:4px;">
+            <span class="smallNote">⚔️ Face Off</span>
+            <select id="faceOffCountSelect">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+          </label>
+          <label style="display:grid; gap:4px;">
+            <span class="smallNote">🛡️ Shield</span>
+            <select id="shieldCountSelect">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+          </label>
+        </div>
+        <div class="smallNote" style="opacity:.78;">Changes apply on the next wheel.</div>
+      </div>
+
+      <div class="sliderRow">
+        <div class="sliderTop">
+          <div class="sliderLabel">Spin Speed</div>
+          <div class="sliderVal" id="spinSpeedVal">Medium</div>
+        </div>
+        <select id="spinSpeedSelect">
+          <option value="slow">Slow</option>
+          <option value="medium">Medium</option>
+          <option value="fast">Fast</option>
+        </select>
+        <div class="smallNote" style="opacity:.78;">Takes effect on the next spin.</div>
+      </div>
+
+      <div class="sliderRow">
+        <div class="sliderTop">
+          <div class="sliderLabel">Background Music</div>
+          <div class="sliderVal"><span id="musicVolVal">25</span>%</div>
+        </div>
+        <input id="musicVol" type="range" min="0" max="100" step="1" value="25" />
+      </div>
+
+      <div class="sliderRow">
+        <div class="sliderTop">
+          <div class="sliderLabel">Sound Effects</div>
+          <div class="sliderVal"><span id="sfxVolVal">70</span>%</div>
+        </div>
+        <input id="sfxVol" type="range" min="0" max="100" step="1" value="70" />
+      </div>
+
+      <div class="btnGrid3">
+        <button id="newWheelBtn" type="button">New Wheel</button>
+        <button id="resetScoresBtn" type="button">Reset Scores</button>
+        <button id="muteBtn" type="button">Mute: Off</button>
+      </div>
+
+      <div class="btnGrid2">
+        <button id="testSfxBtn" type="button">Test SFX</button>
+        <button id="defaultsBtn" type="button">Defaults</button>
+      </div>
+
+      <button id="applySettingsBtn" type="button"
+        style="padding:14px; font-size:17px; font-weight:1000; background:rgba(56,189,153,0.22); border:1px solid rgba(56,189,153,0.5); color:#7be0c0;">
+        ✅ Apply &amp; Start Fresh Wheel
+      </button>
+    </div>
+  </div>
+
+  <!-- MUSIC -->
+  <audio id="musicBgEl" src="bg-music.mp3" preload="auto" loop playsinline></audio>
+  <audio id="musicWinEl" src="winner-music.mp3" preload="auto" loop playsinline></audio>
+
+<script>
+  // ======== CONFIG ========
+  const WHEEL_PRESETS = {
+    "20": { count: 20, label: "20 wedges" },
+    "16": { count: 16, label: "16 wedges" },
+    "12": { count: 12, label: "12 wedges" },
+  };
+  // Constant angular velocity while spinning (degrees per second)
+  const SPIN_SPEEDS = { slow: 210, medium: 320, fast: 450 };
+  const SPIN_SPEED_LABEL = { slow: "Slow", medium: "Medium", fast: "Fast" };
+
+  const moneyValues = [100, 200, 500, 1000];
+
+  const relSfx    = { coin: 0.90, bankrupt: 1.00, double: 0.95, steal: 1.00, faceoff: 1.00, buzzer: 1.00, pickagain: 1.00, shield: 1.00 };
+  const sfxFiles  = { coin: "coin.mp3", bankrupt: "bankrupt.mp3", double: "double.mp3", steal: "steal.mp3", faceoff: "face off.mp3", buzzer: "buzzer.mp3", pickagain: "pick again.mp3", shield: "shield.mp3" };
+
+  const popupAutoCloseMs = 2500;
+  const musicFadeMs = 700;
+
+  // Turn pacing (ms)
+  const LAND_BEAT_MS = 1000;  // hold on the landed wedge before the outcome fires
+  const SHATTER_MS   = 700;   // consumed wedge breaks apart
+  const RELAYOUT_MS  = 1200;  // survivors grow to fill 360° — the centerpiece, never snapped
+
+  // Buzzer hardening (kids hammer it)
+  const BUZZ_KEY      = "1";  // the USB buzzer types this character
+  const BUZZ_DEDUP_MS = 500;  // a "1" within this window of the previous "1" is ignored
+  const BUZZ_ARM_MS   = 300;  // a spin can't be stopped in its first moments
+  // ========================
+
+  const outcomeImages = {
+    "100":"100.png","200":"200.png","500":"500.png","1000":"1000.png",
+    "BANKRUPT":"bankrupt.png","x2":"x2.png","WINNER":"winner.png"
+  };
+
+  // ======== PRESENTER / SYNC ========
+  const isPresentMode = new URLSearchParams(location.search).has('present');
+  const syncChannel = typeof BroadcastChannel !== 'undefined'
+    ? new BroadcastChannel('kingdom-spin-v1') : null;
+  let presenterWindow = null;
+  let currentPopup   = null; // tracks active popup data so it can be synced
+  let applyingRemoteState = false;
+  const SESSION_ID = Math.random().toString(36).slice(2); // identifies this operator load
+  let stateRev = 0;
+  // ==================================
+
+  const LS_KEY = "kingdomSpinSettings_v1";
+  const LS_STATE_KEY = "kingdomSpin_liveState_v1"; // operator → presenter fallback
+  const LS_CMD_KEY = "kingdomSpin_cmd_v1";         // presenter → operator fallback (buzz / spin)
+  const TEAM_KEYS = ["A", "B", "C", "D"];
+  const DEFAULT_TEAM_NAME = { A: "Team A", B: "Team B", C: "Team C", D: "Team D" };
+
+  const defaultSettings = {
+    musicVol: 25, sfxVol: 70, wheelSize: "20",
+    bankruptCount: 1,
+    doubleCount: 2,
+    stealCount: 1,
+    faceOffCount: 1,
+    shieldCount: 1,
+    teamCount: 2,
+    spinSpeed: "medium",
+  };
+  let settings = loadSettings();
+
+  // ---- Game state (operator is authoritative; presenter mirrors) ----
+  let activeTeam = "A";
+  let scores = { A: 0, B: 0, C: 0, D: 0 };
+  let shields = { A: 0, B: 0, C: 0, D: 0 };
+  let teamCount = settings.teamCount;
+  let wheel = [];          // remaining wedges in clockwise order: [{ id, label }]
+  let wheelOffset = 0;     // wheel-space angle (deg, clockwise from 12 o'clock) where wheel[0] starts
+  let wedgeUid = 0;
+  // Spin is described by parameters, never by streamed frames. Every window computes
+  // angle(t) = a0 + vel * (t - t0) from the same numbers, so a hidden window (no rAF)
+  // still lands on exactly the same wedge.
+  let spin = { phase: "idle", a0: 0, vel: 0, t0: 0, angle: 0, seq: 0 }; // phase: idle | spinning | stopped
+  let landedId = null;     // wedge under the pointer after a stop (highlighted)
+  let removingId = null;   // wedge currently shattering
+  let muted = false;
+
+  let popupTimer = null;
+  let winnerShown = false;
+  let started = false;
+
+  const undoStack = [];
+  let turnLock = false;    // true from the stop until the turn fully resolves
+  let gameEpoch = 0;       // bumps on every new wheel so stale async turn flows bail out
+
+  const audio = {
+    ready:false,
+    initPromise:null,
+    wakingPromise:null,
+    ctx:null,
+    masterMusicGain:null,
+    bgGain:null,
+    winGain:null,
+    sfxGain:null,
+    bgSrc:null,
+    winSrc:null,
+    buffers:{},
+    keepAliveOsc:null,
+    htmlPool:{},
+    htmlIdx:{}
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    mainPanel: $("mainPanel"),
+    activeTeamBadge: $("activeTeamBadge"),
+    spinBtn: $("spinBtn"),
+    stopBtn: $("stopBtn"),
+    toggleTeamBtn: $("toggleTeamBtn"),
+    undoBtn: $("undoBtn"),
+    settingsBtn: $("settingsBtn"),
+    presentBtn: $("presentBtn"),
+    log: $("log"),
+
+    wheelSvg: $("wheelSvg"),
+    wheelRot: $("wheelRot"),
+    wedgeLayer: $("wedgeLayer"),
+    shardLayer: $("shardLayer"),
+    bulbs: $("bulbs"),
+    hub: $("hub"),
+    pointer: $("pointer"),
+
+    startOverlay: $("startOverlay"),
+    startBtn: $("startBtn"),
+    startHint: $("startHint"),
+    presenterHud: $("presenterHud"),
+
+    overlay: $("overlay"),
+    popupTitle: $("popupTitle"),
+    popupSub: $("popupSub"),
+    popupAnim: $("popupAnim"),
+    faceOffOverlay: $("faceOffOverlay"),
+    faceOffPickerButtons: $("faceOffPickerButtons"),
+    faceOffStartTimer: $("faceOffStartTimer"),
+    faceOffTimer: $("faceOffTimer"),
+    stealOverlay: $("stealOverlay"),
+    stealPickerSub: $("stealPickerSub"),
+    stealPickerButtons: $("stealPickerButtons"),
+    stealSkipBtn: $("stealSkipBtn"),
+
+    settingsOverlay: $("settingsOverlay"),
+    closeSettingsBtn: $("closeSettingsBtn"),
+    wheelSizeSelect: $("wheelSizeSelect"),
+    wheelSizeVal: $("wheelSizeVal"),
+    teamCountSelect: $("teamCountSelect"),
+    teamCountVal: $("teamCountVal"),
+    bankruptCountSelect: $("bankruptCountSelect"),
+    doubleCountSelect: $("doubleCountSelect"),
+    stealCountSelect: $("stealCountSelect"),
+    faceOffCountSelect: $("faceOffCountSelect"),
+    shieldCountSelect: $("shieldCountSelect"),
+    spinSpeedSelect: $("spinSpeedSelect"),
+    spinSpeedVal: $("spinSpeedVal"),
+    applySettingsBtn: $("applySettingsBtn"),
+    musicVol: $("musicVol"),
+    sfxVol: $("sfxVol"),
+    musicVolVal: $("musicVolVal"),
+    sfxVolVal: $("sfxVolVal"),
+    testSfxBtn: $("testSfxBtn"),
+    defaultsBtn: $("defaultsBtn"),
+    newWheelBtn: $("newWheelBtn"),
+    resetScoresBtn: $("resetScoresBtn"),
+    muteBtn: $("muteBtn"),
+
+    musicBgEl: $("musicBgEl"),
+    musicWinEl: $("musicWinEl"),
+  };
+  for (const k of TEAM_KEYS){
+    els[`team${k}Name`]     = $(`team${k}Name`);
+    els[`team${k}Score`]    = $(`team${k}Score`);
+    els[`team${k}Shield`]   = $(`team${k}Shield`);
+    els[`phTeam${k}Name`]   = $(`phTeam${k}Name`);
+    els[`phTeam${k}Score`]  = $(`phTeam${k}Score`);
+    els[`phTeam${k}Shield`] = $(`phTeam${k}Shield`);
+  }
+
+  function setLog(msg){ els.log.textContent = msg; }
+  function setMuteUI(){ els.muteBtn.textContent = `Mute: ${muted ? "On" : "Off"}`; }
+  function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  function norm360(a){ return ((a % 360) + 360) % 360; }
+
+  function shuffle(arr){
+    for (let i = arr.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function loadSettings(){
+    try{
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return { ...defaultSettings };
+      const obj = JSON.parse(raw);
+      const clampInt = (v, def) => {
+        const n = parseInt(v, 10);
+        return Number.isFinite(n) && n >= 0 && n <= 3 ? n : def;
+      };
+      const tc = parseInt(obj.teamCount, 10);
+      return {
+        musicVol: Number.isFinite(+obj.musicVol) ? +obj.musicVol : defaultSettings.musicVol,
+        sfxVol: Number.isFinite(+obj.sfxVol) ? +obj.sfxVol : defaultSettings.sfxVol,
+        wheelSize: WHEEL_PRESETS[obj.wheelSize] ? obj.wheelSize : defaultSettings.wheelSize,
+        bankruptCount: clampInt(obj.bankruptCount, defaultSettings.bankruptCount),
+        doubleCount:   clampInt(obj.doubleCount,   defaultSettings.doubleCount),
+        stealCount:    clampInt(obj.stealCount,    defaultSettings.stealCount),
+        faceOffCount:  clampInt(obj.faceOffCount,  defaultSettings.faceOffCount),
+        shieldCount:   clampInt(obj.shieldCount,   defaultSettings.shieldCount),
+        teamCount:     (tc === 2 || tc === 3 || tc === 4) ? tc : defaultSettings.teamCount,
+        spinSpeed:     SPIN_SPEEDS[obj.spinSpeed] ? obj.spinSpeed : defaultSettings.spinSpeed,
+      };
+    } catch (_) { return { ...defaultSettings }; }
+  }
+  function saveSettings(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch (_) {} }
+
+  function applySettingsToUI(){
+    els.musicVol.value = String(settings.musicVol);
+    els.sfxVol.value = String(settings.sfxVol);
+    els.musicVolVal.textContent = String(settings.musicVol);
+    els.sfxVolVal.textContent = String(settings.sfxVol);
+
+    els.wheelSizeSelect.value = settings.wheelSize;
+    els.wheelSizeVal.textContent = WHEEL_PRESETS[settings.wheelSize]?.label ?? "20 wedges";
+    els.bankruptCountSelect.value = String(settings.bankruptCount);
+    els.doubleCountSelect.value   = String(settings.doubleCount);
+    els.stealCountSelect.value    = String(settings.stealCount);
+    els.faceOffCountSelect.value  = String(settings.faceOffCount);
+    els.shieldCountSelect.value   = String(settings.shieldCount);
+    els.teamCountSelect.value     = String(settings.teamCount);
+    els.teamCountVal.textContent  = String(settings.teamCount);
+    els.spinSpeedSelect.value     = settings.spinSpeed;
+    els.spinSpeedVal.textContent  = SPIN_SPEED_LABEL[settings.spinSpeed];
+  }
+
+  function activeTeamKeys(){ return TEAM_KEYS.slice(0, teamCount); }
+  function nextTeam(t){
+    const keys = activeTeamKeys();
+    const i = keys.indexOf(t);
+    return keys[(i + 1) % keys.length];
+  }
+  function getTeamName(k){
+    const el = els[`team${k}Name`];
+    return (el && el.innerText.trim()) || DEFAULT_TEAM_NAME[k];
+  }
+  function applyTeamCountLayout(){
+    els.mainPanel.classList.remove('teams-2','teams-3','teams-4');
+    els.mainPanel.classList.add(`teams-${teamCount}`);
+    els.presenterHud.classList.remove('teams-2','teams-3','teams-4');
+    els.presenterHud.classList.add(`teams-${teamCount}`);
+    if (!activeTeamKeys().includes(activeTeam)) activeTeam = 'A';
+  }
+
+  // ======== AUDIO (operator device only — same known limitation as Kingdom Clash) ========
+  function applySettingsToAudio(){
+    if (!audio.ready) return;
+    const music = muted ? 0 : clamp01(settings.musicVol / 100);
+    const sfx = muted ? 0 : clamp01(settings.sfxVol / 100);
+    audio.masterMusicGain.gain.setValueAtTime(music, audio.ctx.currentTime);
+    audio.sfxGain.gain.setValueAtTime(sfx, audio.ctx.currentTime);
+  }
+
+  function initHtmlFallbackPool(){
+    for (const k of Object.keys(sfxFiles)){
+      audio.htmlPool[k] = [];
+      audio.htmlIdx[k] = 0;
+      for (let i = 0; i < 4; i++){
+        const a = new Audio(sfxFiles[k]);
+        a.preload = "auto";
+        a.playsInline = true;
+        audio.htmlPool[k].push(a);
+      }
+    }
+  }
+
+  async function loadSfxBuffers(){
+    const entries = Object.entries(sfxFiles);
+    await Promise.all(entries.map(async ([key, url]) => {
+      try{
+        const res = await fetch(url, { cache:"no-store" });
+        if (!res.ok) throw new Error("fetch failed " + url);
+        const arr = await res.arrayBuffer();
+        audio.buffers[key] = await audio.ctx.decodeAudioData(arr);
+      } catch (_) {}
+    }));
+  }
+
+  function initAudioIfNeeded(){
+    if (audio.ready) return Promise.resolve();
+    if (audio.initPromise) return audio.initPromise;
+
+    audio.initPromise = (async () => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC){
+        initHtmlFallbackPool();
+        setLog("Audio not supported on this device.");
+        return;
+      }
+      const ctx = new AC();
+      audio.ctx = ctx;
+
+      audio.masterMusicGain = ctx.createGain();
+      audio.bgGain = ctx.createGain();
+      audio.winGain = ctx.createGain();
+      audio.sfxGain = ctx.createGain();
+
+      audio.bgGain.connect(audio.masterMusicGain);
+      audio.winGain.connect(audio.masterMusicGain);
+      audio.masterMusicGain.connect(ctx.destination);
+      audio.sfxGain.connect(ctx.destination);
+
+      audio.bgSrc = ctx.createMediaElementSource(els.musicBgEl);
+      audio.winSrc = ctx.createMediaElementSource(els.musicWinEl);
+      audio.bgSrc.connect(audio.bgGain);
+      audio.winSrc.connect(audio.winGain);
+
+      audio.bgGain.gain.value = 1;
+      audio.winGain.gain.value = 0;
+
+      initHtmlFallbackPool();
+      await resumeAudio();
+      await loadSfxBuffers();
+
+      audio.ready = true;
+      applySettingsToAudio();
+      startBgMusic();
+    })();
+
+    return audio.initPromise;
+  }
+
+  function resumeAudio(){
+    if (!audio.ctx) return Promise.resolve();
+    if (audio.wakingPromise) return audio.wakingPromise;
+
+    audio.wakingPromise = (async () => {
+      try{
+        if (audio.ctx.state !== "running") await audio.ctx.resume();
+      } catch (_) {}
+
+      // Keep-alive to reduce iOS suspends
+      try{
+        if (!audio.keepAliveOsc){
+          const osc = audio.ctx.createOscillator();
+          const g = audio.ctx.createGain();
+          g.gain.value = 0.00001;
+          osc.frequency.value = 30;
+          osc.connect(g);
+          g.connect(audio.ctx.destination);
+          osc.start();
+          audio.keepAliveOsc = osc;
+        }
+      } catch (_) {}
+    })().finally(() => { audio.wakingPromise = null; });
+
+    return audio.wakingPromise;
+  }
+
+  function ensureAudioAwake(){
+    return initAudioIfNeeded().then(() => resumeAudio());
+  }
+
+  function rampGain(node, value, ms = 500){
+    if (!audio.ready || !audio.ctx) return;
+    const t = audio.ctx.currentTime;
+    const end = t + ms / 1000;
+    node.gain.cancelScheduledValues(t);
+    node.gain.setValueAtTime(node.gain.value, t);
+    node.gain.linearRampToValueAtTime(value, end);
+  }
+
+  function ensureMusicPlaying(){
+    els.musicBgEl.play().catch(() => {});
+    els.musicWinEl.play().catch(() => {});
+  }
+
+  function startBgMusic(){
+    if (!audio.ready || muted) return;
+    ensureMusicPlaying();
+    rampGain(audio.bgGain, 1, musicFadeMs);
+    rampGain(audio.winGain, 0, musicFadeMs);
+  }
+  function startWinnerMusic(){
+    if (!audio.ready || muted) return;
+    ensureMusicPlaying();
+    rampGain(audio.bgGain, 0, musicFadeMs);
+    rampGain(audio.winGain, 1, musicFadeMs);
+  }
+
+  function synthOk(){
+    return audio.ready && audio.ctx && !muted && audio.ctx.state === "running";
+  }
+
+  // Synthesized clock tick for the face-off countdown's final seconds.
+  function playTick(second){
+    try {
+      if (!synthOk()) return;
+      const ctx = audio.ctx;
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(second % 2 ? 1150 : 900, t); // tick… tock…
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.35, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+      osc.connect(g);
+      g.connect(audio.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.09);
+    } catch (_) {}
+  }
+
+  // Flapper click as each wedge seam passes the pointer.
+  function playSpinTick(){
+    try {
+      if (!synthOk()) return;
+      const ctx = audio.ctx;
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(1500, t);
+      osc.frequency.exponentialRampToValueAtTime(700, t + 0.03);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+      osc.connect(g);
+      g.connect(audio.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.05);
+    } catch (_) {}
+  }
+
+  // The hard stop: a low thunk + a short noise crack. No coast, so the sound sells it.
+  function playStopThunk(){
+    try {
+      if (!synthOk()) return;
+      const ctx = audio.ctx;
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(190, t);
+      osc.frequency.exponentialRampToValueAtTime(42, t + 0.22);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(1.0, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      osc.connect(g); g.connect(audio.sfxGain);
+      osc.start(t); osc.stop(t + 0.32);
+
+      const len = Math.floor(ctx.sampleRate * 0.07);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      const ng = ctx.createGain();
+      ng.gain.value = 0.5;
+      noise.connect(ng); ng.connect(audio.sfxGain);
+      noise.start(t);
+    } catch (_) {}
+  }
+
+  // Wedge shatter: a quick descending glassy sweep.
+  function playShatter(){
+    try {
+      if (!synthOk()) return;
+      const ctx = audio.ctx;
+      const t = ctx.currentTime;
+      const len = Math.floor(ctx.sampleRate * 0.35);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+      const noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      const f = ctx.createBiquadFilter();
+      f.type = "highpass";
+      f.frequency.setValueAtTime(3500, t);
+      f.frequency.exponentialRampToValueAtTime(900, t + 0.3);
+      const g = ctx.createGain();
+      g.gain.value = 0.45;
+      noise.connect(f); f.connect(g); g.connect(audio.sfxGain);
+      noise.start(t);
+    } catch (_) {}
+  }
+
+  async function playSfx(key){
+    try { await ensureAudioAwake(); } catch (_) {}
+    if (muted) return;
+
+    const buf = audio.buffers[key];
+    if (audio.ctx && buf){
+      try{
+        if (audio.ctx.state !== "running") await audio.ctx.resume();
+        const src = audio.ctx.createBufferSource();
+        src.buffer = buf;
+        const g = audio.ctx.createGain();
+        g.gain.value = clamp01(relSfx[key] ?? 1);
+        src.connect(g);
+        g.connect(audio.sfxGain);
+        src.start(0);
+        return;
+      } catch (_) {}
+    }
+
+    // Fallback
+    const pool = audio.htmlPool[key] || [];
+    if (!pool.length) return;
+    const i = audio.htmlIdx[key] % pool.length;
+    audio.htmlIdx[key] = (audio.htmlIdx[key] + 1) % pool.length;
+
+    const el = pool[i];
+    try{ el.pause(); } catch (_) {}
+    try{ el.currentTime = 0; } catch (_) { try{ el.load(); } catch (_) {} }
+    el.volume = clamp01((settings.sfxVol / 100) * (relSfx[key] ?? 1));
+    el.play().catch(() => {});
+  }
+
+  // ======== DECK ========
+  function buildDeck(count){
+    const deck = [];
+    for (let i = 0; i < settings.bankruptCount; i++) deck.push("BANKRUPT");
+    for (let i = 0; i < settings.doubleCount; i++)   deck.push("x2");
+    for (let i = 0; i < 2; i++)                      deck.push("SPIN_AGAIN");
+    for (let i = 0; i < settings.stealCount; i++)    deck.push("STEAL");
+    for (let i = 0; i < settings.faceOffCount; i++)  deck.push("FACE_OFF");
+    for (let i = 0; i < settings.shieldCount; i++)   deck.push("SHIELD");
+    deck.push("1000"); // guaranteed high-value wedge
+    while (deck.length < count){
+      deck.push(String(moneyValues[Math.floor(Math.random() * moneyValues.length)]));
+    }
+    return shuffle(deck).slice(0, count);
+  }
+
+  // ======== WHEEL RENDERING ========
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const WHEEL_R = 480;
+
+  // Colour-coded by outcome type so the room can read the wheel at a glance.
+  function wedgeSpec(label){
+    switch (label){
+      case "BANKRUPT":   return { fill:"#15151b", emoji:"💥", sub:"BANKRUPT",   subColor:"#ff5c5c" };
+      case "x2":         return { fill:"#1f9d55", text:"x2",  color:"#eafff2" };
+      case "SPIN_AGAIN": return { fill:"#d6336c", emoji:"🔁", sub:"SPIN AGAIN", subColor:"#ffe3ee" };
+      case "STEAL":      return { fill:"#6b3fc4", emoji:"🐉", sub:"STEAL",      subColor:"#e6d9ff" };
+      case "FACE_OFF":   return { fill:"#c2410c", emoji:"⚔️", sub:"FACE OFF",   subColor:"#ffe1a8" };
+      case "SHIELD":     return { fill:"#2b7fd9", emoji:"🛡️", sub:"SHIELD",     subColor:"#e0f0ff" };
+      case "100":        return { fill:"#1d4ed8", text:"100",  color:"#fff" };
+      case "200":        return { fill:"#0f8f8f", text:"200",  color:"#fff" };
+      case "500":        return { fill:"#e8890c", text:"500",  color:"#fff" };
+      case "1000":       return { fill:"#ffd24a", text:"1000", color:"#3a2500", stroke:"rgba(255,255,255,0.55)" };
+      default:           return { fill:"#444", text:String(label), color:"#fff" };
+    }
+  }
+  function niceLabel(label){
+    return ({ BANKRUPT:"BANKRUPT 💥", x2:"x2", SPIN_AGAIN:"SPIN AGAIN 🔁", STEAL:"STEAL 🐉", FACE_OFF:"FACE OFF ⚔️", SHIELD:"SHIELD 🛡️" })[label] || label;
+  }
+
+  // Angles are degrees clockwise from 12 o'clock, in wheel space.
+  function polar(r, deg){
+    const a = deg * Math.PI / 180;
+    return [r * Math.sin(a), -r * Math.cos(a)];
+  }
+  const f2 = (n) => n.toFixed(2);
+  function sectorPath(start, sweep, r0, r1){
+    if (sweep >= 359.99){
+      // Full ring — a single arc can't span 360°, so use two halves
+      let d = `M 0 ${-r1} A ${r1} ${r1} 0 1 1 0 ${r1} A ${r1} ${r1} 0 1 1 0 ${-r1} Z`;
+      if (r0 > 0) d += ` M 0 ${-r0} A ${r0} ${r0} 0 1 0 0 ${r0} A ${r0} ${r0} 0 1 0 0 ${-r0} Z`;
+      return d;
+    }
+    const large = sweep > 180 ? 1 : 0;
+    const [x1, y1] = polar(r1, start);
+    const [x2, y2] = polar(r1, start + sweep);
+    if (r0 <= 0) return `M 0 0 L ${f2(x1)} ${f2(y1)} A ${r1} ${r1} 0 ${large} 1 ${f2(x2)} ${f2(y2)} Z`;
+    const [x3, y3] = polar(r0, start + sweep);
+    const [x4, y4] = polar(r0, start);
+    return `M ${f2(x1)} ${f2(y1)} A ${r1} ${r1} 0 ${large} 1 ${f2(x2)} ${f2(y2)} L ${f2(x3)} ${f2(y3)} A ${r0} ${r0} 0 ${large} 0 ${f2(x4)} ${f2(y4)} Z`;
+  }
+  // Width available across a wedge at radius r
+  function chord(r, sweep){
+    return sweep >= 180 ? 2 * r : 2 * r * Math.sin(sweep * Math.PI / 360);
+  }
+
+  const view = new Map(); // wedge id -> { id, label, spec, start, sweep, g, path, flash, labelG, main, sub }
+  let layoutTween = null;
+  let theta = 0;          // current rendered wheel rotation (deg)
+
+  function svgEl(name, attrs){
+    const el = document.createElementNS(SVG_NS, name);
+    if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  function createWedge(id, label){
+    const spec = wedgeSpec(label);
+    const g = svgEl("g", { class: "wedge" });
+    g.dataset.id = id;
+    const path = svgEl("path", { class: "wedgeFill", fill: spec.fill });
+    const flash = svgEl("path", { class: "wedgeFlash" });
+    const labelG = svgEl("g");
+    let main, sub = null;
+    if (spec.emoji){
+      // Emoji sits upright near the rim; its name runs along the radius beneath it
+      main = svgEl("text", { class: "wedgeEmoji", x: 0, y: -392, dy: "0.36em" });
+      main.textContent = spec.emoji;
+      sub = svgEl("text", { class: "wedgeText", transform: "translate(0,-232) rotate(-90)", dy: "0.36em", fill: spec.subColor });
+      sub.textContent = spec.sub;
+      labelG.append(main, sub);
+    } else {
+      // Numbers run along the radius — far bigger than they could be across a thin wedge
+      main = svgEl("text", { class: "wedgeText", transform: "translate(0,-348) rotate(-90)", dy: "0.36em", fill: spec.color });
+      if (spec.stroke) main.style.stroke = spec.stroke;
+      main.textContent = spec.text;
+      labelG.append(main);
+    }
+    g.append(path, flash, labelG);
+    els.wedgeLayer.appendChild(g);
+    const v = { id, label, spec, start: 0, sweep: 0, g, path, flash, labelG, main, sub };
+    view.set(id, v);
+    return v;
+  }
+
+  function drawWedge(v){
+    const sw = Math.max(v.sweep, 0.01);
+    const d = sectorPath(v.start, sw, 0, WHEEL_R);
+    v.path.setAttribute("d", d);
+    v.flash.setAttribute("d", d);
+    v.labelG.setAttribute("transform", `rotate(${f2(v.start + sw / 2)})`);
+    v.labelG.setAttribute("opacity", sw < 3 ? 0 : 1);
+    if (v.spec.emoji){
+      v.main.setAttribute("font-size", f2(Math.min(chord(392, sw) * 0.62, 120)));
+      v.sub.setAttribute("font-size", f2(Math.min(chord(140, sw) * 0.92, 200 / (v.spec.sub.length * 0.56), 64)));
+    } else {
+      v.main.setAttribute("font-size", f2(Math.min(chord(240, sw) * 0.92, 228 / (v.spec.text.length * 0.56), 150)));
+    }
+  }
+
+  // Animation driver that can never leave things half-finished: snaps to the end
+  // when the tab is hidden (rAF doesn't fire there — Kingdom Clash gotcha #3) and
+  // carries a failsafe timer in case rAF stalls mid-flight.
+  function runTween(dur, onFrame, onDone){
+    const h = { cancelled:false, cancel(){ this.cancelled = true; clearTimeout(this.fs); } };
+    let done = false;
+    const finish = () => {
+      if (done || h.cancelled) return;
+      done = true;
+      clearTimeout(h.fs);
+      onFrame(1);
+      if (onDone) onDone();
+    };
+    if (document.hidden || typeof requestAnimationFrame !== "function"){ finish(); return h; }
+    const t0 = performance.now();
+    h.fs = setTimeout(finish, dur + 500);
+    const step = (now) => {
+      if (done || h.cancelled) return;
+      const p = Math.min(1, (now - t0) / dur);
+      if (p >= 1){ finish(); return; }
+      onFrame(p);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    return h;
+  }
+  const easeInOutCubic = (p) => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+  const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+
+  // Bring the rendered wedges in line with `wheel` + `wheelOffset`. With animate=true
+  // every surviving wedge glides from its current angles to its new, larger slot.
+  function syncWheelView(animate){
+    const n = wheel.length;
+    const a = n ? 360 / n : 0;
+    const ids = new Set(wheel.map(w => w.id));
+    let survivors = 0;
+    for (const [id, v] of view){
+      if (ids.has(id)) { survivors++; continue; }
+      if (v.shattering) continue; // shatterWedge cleans itself up
+      v.g.remove();
+      view.delete(id);
+    }
+    const fresh = survivors === 0; // brand-new wheel → fan the wedges open from the pointer
+    if (layoutTween){ layoutTween.cancel(); layoutTween = null; }
+
+    const moves = [];
+    wheel.forEach((w, i) => {
+      const tStart = wheelOffset + i * a;
+      let v = view.get(w.id);
+      if (!v){
+        v = createWedge(w.id, w.label);
+        if (animate && fresh){ v.start = wheelOffset + (n ? a / 2 : 0); v.sweep = 0; }
+        else if (animate){ v.start = tStart + a / 2; v.sweep = 0; } // restored wedge (undo) grows from its centre
+        else { v.start = tStart; v.sweep = a; }
+      }
+      // Take the short way round — offsets are stored mod 360
+      let ts = tStart;
+      while (ts - v.start > 180) ts -= 360;
+      while (ts - v.start < -180) ts += 360;
+      moves.push({ v, s0: v.start, w0: v.sweep, s1: ts, w1: a });
+    });
+    // Keep DOM order = wheel order so seams overlap consistently
+    for (const m of moves) els.wedgeLayer.appendChild(m.v.g);
+
+    const apply = (e) => {
+      for (const m of moves){
+        m.v.start = m.s0 + (m.s1 - m.s0) * e;
+        m.v.sweep = m.w0 + (m.w1 - m.w0) * e;
+        drawWedge(m.v);
+      }
+    };
+    if (!animate){ apply(1); return; }
+    layoutTween = runTween(RELAYOUT_MS, (p) => apply(easeInOutCubic(p)), () => { layoutTween = null; });
+  }
+
+  // Consumed wedge: white-hot flash, then it breaks into shards that fly outward.
+  function shatterWedge(id){
+    const v = view.get(id);
+    if (!v || v.shattering) return;
+    if (document.hidden){ v.g.remove(); view.delete(id); return; }
+    v.shattering = true;
+    const sw = Math.max(v.sweep, 1);
+    const angN = Math.max(3, Math.min(12, Math.ceil(sw / 24)));
+    const radii = [0, 170, 330, WHEEL_R];
+    let shards = null;
+
+    const build = () => {
+      shards = [];
+      for (let ai = 0; ai < angN; ai++){
+        for (let ri = 0; ri < radii.length - 1; ri++){
+          const s = v.start + (sw / angN) * ai;
+          const p = svgEl("path", {
+            d: sectorPath(s, sw / angN, radii[ri], radii[ri + 1]),
+            fill: (ai + ri) % 3 === 0 ? "#fff" : v.spec.fill,
+            stroke: "rgba(255,255,255,0.8)",
+            "stroke-width": 2,
+          });
+          const midA = s + sw / angN / 2 + (Math.random() * 16 - 8);
+          const midR = (radii[ri] + radii[ri + 1]) / 2;
+          const [cx, cy] = polar(midR, s + sw / angN / 2);
+          const [ux, uy] = polar(1, midA);
+          const dist = 90 + Math.random() * 190 + ri * 40;
+          els.shardLayer.appendChild(p);
+          shards.push({ p, cx, cy, dx: ux * dist, dy: uy * dist, rot: (Math.random() * 2 - 1) * 160 });
+        }
+      }
+      v.g.remove();
+    };
+    const FLASH_PORTION = 0.16;
+    runTween(SHATTER_MS, (p) => {
+      if (p < FLASH_PORTION){
+        v.flash.style.animation = "none";
+        v.flash.style.opacity = String(0.25 + 0.75 * (p / FLASH_PORTION));
+        return;
+      }
+      if (!shards) build();
+      const q = (p - FLASH_PORTION) / (1 - FLASH_PORTION);
+      const e = easeOutCubic(q);
+      for (const s of shards){
+        s.p.setAttribute("transform",
+          `translate(${f2(s.dx * e)} ${f2(s.dy * e)}) rotate(${f2(s.rot * e)} ${f2(s.cx)} ${f2(s.cy)})`);
+        s.p.setAttribute("opacity", f2(1 - q * q));
+      }
+    }, () => {
+      if (shards) for (const s of shards) s.p.remove();
+      v.g.remove();
+      if (view.get(id) === v) view.delete(id);
+    });
+  }
+
+  function setLanded(id){
+    for (const [wid, v] of view) v.g.classList.toggle("landed", wid === id);
+    els.wheelRot.classList.toggle("hasLanded", id != null && view.has(id));
+  }
+
+  function buildBulbs(){
+    const N = 24;
+    for (let i = 0; i < N; i++){
+      const [x, y] = polar(497, (360 / N) * i + 7.5);
+      const c = svgEl("circle", { class: "bulb", cx: f2(x), cy: f2(y), r: 7, fill: i % 2 ? "#fff6d6" : "#ffd24a" });
+      const dur = 1.2 + Math.random() * 1.2;
+      c.style.setProperty("--bulb-dur", dur.toFixed(2) + "s");
+      c.style.setProperty("--bulb-delay", (-Math.random() * dur).toFixed(2) + "s");
+      els.bulbs.appendChild(c);
+    }
+  }
+
+  // ======== SPIN MATH ========
+  function setTheta(a){
+    theta = a;
+    els.wheelRot.setAttribute("transform", `rotate(${a.toFixed(3)})`);
+  }
+  function angleAt(t){ return spin.a0 + spin.vel * (t - spin.t0); }
+  // Which wedge sits under the fixed 12 o'clock pointer when the wheel is rotated by `ang`
+  function indexAtAngle(ang){
+    const n = wheel.length;
+    if (!n) return -1;
+    const p = norm360(-ang - wheelOffset);
+    return Math.min(n - 1, Math.floor(p / (360 / n)));
+  }
+
+  let spinRaf = null;
+  let lastTickIdx = -1;
+  // Presenter-only: freeze locally the instant the buzzer key lands here, then wait
+  // for the operator's authoritative stop (same numbers, so it lands identically).
+  let optimisticStop = null; // { seq, angle, until }
+
+  function spinVisualLive(){
+    if (spin.phase !== "spinning") return false;
+    if (optimisticStop && optimisticStop.seq === spin.seq){
+      if (Date.now() < optimisticStop.until) return false;
+      optimisticStop = null; // operator never confirmed — resume
+      els.pointer.classList.remove("flick");
+      els.pointer.classList.add("ticking");
+      setLanded(null);
+    }
+    return true;
+  }
+  function spinFrame(){
+    spinRaf = null;
+    if (!spinVisualLive()){
+      if (spin.phase === "spinning") spinRaf = requestAnimationFrame(spinFrame); // waiting out an optimistic freeze
+      return;
+    }
+    const a = angleAt(Date.now());
+    setTheta(norm360(a));
+    const idx = indexAtAngle(a);
+    if (idx !== lastTickIdx){
+      lastTickIdx = idx;
+      if (!isPresentMode) playSpinTick();
+    }
+    spinRaf = requestAnimationFrame(spinFrame);
+  }
+  function ensureSpinLoop(){
+    if (spin.phase !== "spinning") return;
+    document.body.classList.add("spinning");
+    if (!(optimisticStop && optimisticStop.seq === spin.seq)){
+      els.pointer.classList.remove("flick");
+      els.pointer.classList.add("ticking");
+    }
+    if (!spinRaf && typeof requestAnimationFrame === "function") spinRaf = requestAnimationFrame(spinFrame);
+  }
+  function stopSpinLoop(){
+    if (spinRaf){ cancelAnimationFrame(spinRaf); spinRaf = null; }
+    document.body.classList.remove("spinning");
+    els.pointer.classList.remove("ticking");
+  }
+
+  // No deceleration, so the stop is sold with juice: pointer flick, hub thump,
+  // micro screen-shake (the landed-wedge flash comes from setLanded).
+  function restartClass(el, cls, ms){
+    el.classList.remove(cls);
+    void el.getBoundingClientRect(); // restart the animation if it just ran
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), ms);
+  }
+  function stopJuice(){
+    if (document.hidden) return;
+    restartClass(els.pointer, "flick", 600);
+    restartClass(els.hub, "thump", 450);
+    restartClass(document.body, "stopShake", 280);
+  }
+
+  // ======== POPUPS ========
+  function addSparkles(count = 10){
+    for (let i = 0; i < count; i++){
+      const s = document.createElement("div");
+      s.className = "spark";
+      s.textContent = "✨";
+      s.style.left = "50%";
+      s.style.top = "60%";
+      s.style.setProperty("--x", (Math.random() * 320 - 160) + "px");
+      s.style.setProperty("--y", (Math.random() * 70 - 25) + "px");
+      s.style.animationDelay = (Math.random() * 140) + "ms";
+      els.popupAnim.appendChild(s);
+    }
+  }
+
+  function showPopup(kind, title, sub, color, imageKey, autoClose = true){
+    if (popupTimer) clearTimeout(popupTimer);
+
+    // Always track + broadcast so the presenter window mirrors the popup
+    currentPopup = { kind, title, sub, color, imageKey };
+    broadcastState();
+
+    // Timer must be set before the early return so hidePopup() fires and clears
+    // the popup on the presenter even though the operator has no overlay
+    if (autoClose) popupTimer = setTimeout(() => hidePopup(), popupAutoCloseMs);
+
+    // Operator screen never shows the overlay — log text is sufficient
+    if (!isPresentMode) return;
+
+    els.popupAnim.innerHTML = "";
+
+    els.overlay.classList.toggle("winner", kind === "winner");
+    els.overlay.classList.toggle("steal", kind === "steal");
+    els.overlay.classList.remove("heartbeat");
+    els.overlay.classList.remove("hidden");
+    els.overlay.setAttribute("aria-hidden", "false");
+
+    els.popupTitle.textContent = title;
+    els.popupTitle.style.color = color;
+    els.popupSub.textContent = sub;
+
+    const src = outcomeImages[imageKey];
+    if (src){
+      const im = document.createElement("img");
+      im.className = "popupImg";
+      im.src = src;
+      im.alt = imageKey;
+      els.popupAnim.appendChild(im);
+    } else {
+      const fallback = document.createElement("div");
+      fallback.className = "popupEmoji";
+      fallback.textContent = imageKey === "STEAL" ? "🐉"
+                           : imageKey === "BANKRUPT" ? "💥"
+                           : imageKey === "FACE_OFF" ? "⚔️"
+                           : imageKey === "SHIELD" ? "🛡️"
+                           : "⭐";
+      els.popupAnim.appendChild(fallback);
+    }
+
+    if (kind === "money") addSparkles(8);
+    if (kind === "winner") addSparkles(14);
+  }
+
+  function hidePopup(){
+    if (popupTimer){ clearTimeout(popupTimer); popupTimer = null; }
+    currentPopup = null;
+    broadcastState();
+    if (!isPresentMode) return;
+    els.overlay.classList.add("hidden");
+    els.overlay.classList.remove("winner", "steal", "heartbeat");
+    els.overlay.setAttribute("aria-hidden", "true");
+  }
+
+  // ======== PICKERS ========
+  function pickFaceOffWinner(){
+    // Operator-only modal. Resolves with the winner team key once the host taps a winner.
+    return new Promise((resolve) => {
+      if (isPresentMode){ resolve(activeTeam); return; }
+      els.faceOffOverlay.classList.remove('hidden');
+      els.faceOffOverlay.setAttribute('aria-hidden', 'false');
+
+      let timerInterval = null;
+      let timerSeconds = 20;
+      els.faceOffTimer.textContent = '20';
+      els.faceOffTimer.classList.remove('warn', 'done');
+      els.faceOffStartTimer.disabled = false;
+      els.faceOffStartTimer.textContent = 'Start 20s Timer';
+
+      function syncPresenterCountdown(label, warn, done){
+        if (currentPopup){
+          currentPopup.countdown = label;
+          currentPopup.countdownWarn = !!warn;
+          currentPopup.countdownDone = !!done;
+          broadcastState();
+        }
+      }
+      function pulseTimer(big){
+        if (!els.faceOffTimer.animate) return;
+        const peak = big ? 1.28 : 1.18;
+        els.faceOffTimer.animate(
+          [{ transform: 'scale(1)' }, { transform: `scale(${peak})`, offset: 0.35 }, { transform: 'scale(1)' }],
+          { duration: 360, easing: 'cubic-bezier(.2,.85,.2,1)' }
+        );
+      }
+      function startTimer(){
+        if (timerInterval){ clearInterval(timerInterval); timerInterval = null; }
+        timerSeconds = 20;
+        els.faceOffTimer.textContent = String(timerSeconds);
+        els.faceOffTimer.classList.remove('warn', 'done');
+        els.faceOffOverlay.classList.remove('heartbeat');
+        els.faceOffStartTimer.disabled = true;
+        els.faceOffStartTimer.textContent = 'Running…';
+        syncPresenterCountdown(timerSeconds, false, false);
+        pulseTimer(false);
+        timerInterval = setInterval(() => {
+          timerSeconds -= 1;
+          if (timerSeconds <= 0){
+            clearInterval(timerInterval); timerInterval = null;
+            els.faceOffTimer.textContent = "TIME!";
+            els.faceOffTimer.classList.remove('warn');
+            els.faceOffTimer.classList.add('done');
+            els.faceOffOverlay.classList.remove('heartbeat');
+            els.faceOffStartTimer.disabled = false;
+            els.faceOffStartTimer.textContent = 'Restart 20s Timer';
+            syncPresenterCountdown('TIME!', false, true);
+            try { playSfx("buzzer"); } catch (_) {}
+            return;
+          }
+          els.faceOffTimer.textContent = String(timerSeconds);
+          if (timerSeconds <= 5){
+            els.faceOffTimer.classList.add('warn');
+            els.faceOffOverlay.classList.add('heartbeat');
+            playTick(timerSeconds);
+          }
+          syncPresenterCountdown(timerSeconds, timerSeconds <= 5, false);
+          pulseTimer(timerSeconds <= 5);
+        }, 1000);
+      }
+
+      const onStart = () => startTimer();
+      function cleanup(){
+        if (timerInterval){ clearInterval(timerInterval); timerInterval = null; }
+        els.faceOffStartTimer.removeEventListener('click', onStart);
+        els.faceOffPickerButtons.innerHTML = '';
+        els.faceOffOverlay.classList.remove('heartbeat');
+        els.faceOffOverlay.classList.add('hidden');
+        els.faceOffOverlay.setAttribute('aria-hidden', 'true');
+      }
+      els.faceOffStartTimer.addEventListener('click', onStart);
+
+      els.faceOffPickerButtons.innerHTML = '';
+      for (const k of activeTeamKeys()){
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = `${getTeamName(k)} Wins`;
+        b.addEventListener('click', () => { cleanup(); resolve(k); });
+        els.faceOffPickerButtons.appendChild(b);
+      }
+    });
+  }
+
+  // STEAL target picker — resolves with the target team key or null on skip.
+  function pickStealTarget(){
+    return new Promise((resolve) => {
+      if (isPresentMode){ resolve(nextTeam(activeTeam)); return; }
+      const others = activeTeamKeys().filter(k => k !== activeTeam);
+      els.stealPickerSub.textContent = `${getTeamName(activeTeam)} — pick a team to steal from, or skip`;
+      els.stealPickerButtons.innerHTML = '';
+
+      const onSkip = () => { cleanup(); resolve(null); };
+      function cleanup(){
+        els.stealPickerButtons.innerHTML = '';
+        els.stealSkipBtn.removeEventListener('click', onSkip);
+        els.stealOverlay.classList.add('hidden');
+        els.stealOverlay.setAttribute('aria-hidden', 'true');
+      }
+      for (const k of others){
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = `Steal from ${getTeamName(k)}`;
+        b.addEventListener('click', () => { cleanup(); resolve(k); });
+        els.stealPickerButtons.appendChild(b);
+      }
+      els.stealSkipBtn.addEventListener('click', onSkip);
+      els.stealOverlay.classList.remove('hidden');
+      els.stealOverlay.setAttribute('aria-hidden', 'false');
+    });
+  }
+
+  // ======== OUTCOMES ========
+  // Applies to the active team, good or bad. Returns true if the team keeps the turn.
+  async function applyOutcome(label){
+    const teamName = getTeamName(activeTeam);
+    const fromEl = els.pointer; // points fly from the pointer to the score box
+
+    if (label === "BANKRUPT"){
+      if (shields[activeTeam] > 0){
+        shields[activeTeam]--;
+        updateScores();
+        setLog(`🛡️ ${teamName}'s shield BLOCKED the bankrupt!`);
+        try { await playSfx("shield"); } catch (_) {}
+        showPopup("shield", "🛡️ BLOCKED!", `${teamName}'s shield absorbed the BANKRUPT`, "#7cc4ff", "SHIELD", true);
+        return false;
+      }
+      bankruptFx();
+      scores[activeTeam] = 0;
+      updateScores();
+      setLog(`${teamName} hit BANKRUPT 😬 Score reset to 0.`);
+      await playSfx("bankrupt");
+      showPopup("bankrupt", "BANKRUPT", "Score reset to 0", "var(--danger)", "BANKRUPT", true);
+      return false;
+    }
+
+    if (label === "x2"){
+      x2SplitEffect(activeTeam);
+      scores[activeTeam] *= 2;
+      updateScores();
+      setLog(`${teamName} got x2! Score doubled.`);
+      await playSfx("double");
+      showPopup("double", "x2", "Score doubled!", "var(--good)", "x2", true);
+      return false;
+    }
+
+    if (label === "SPIN_AGAIN"){
+      flyPoints(fromEl, els[`team${activeTeam}Score`], "+1000");
+      scores[activeTeam] += 1000;
+      updateScores();
+      setLog(`${teamName} got +1000 and spins again! 🎉`);
+      try { await playSfx("pickagain"); } catch (_) {}
+      showPopup("money", "+1000 — Spin Again!", "Same team goes again", "var(--accent)", "1000", true);
+      return true;
+    }
+
+    if (label === "STEAL"){
+      try { await playSfx("steal"); } catch (_) {}
+      showPopup("steal", "🐉 STEAL!", `${teamName} is deciding…`, "#b794f4", "STEAL", false);
+      const targetKey = await pickStealTarget();
+
+      if (targetKey === null){
+        setLog(`${teamName} chose NOT to steal.`);
+        showPopup("steal", "🐉 STEAL!", `${teamName} passed on the steal`, "#b794f4", "STEAL", true);
+        return false;
+      }
+
+      const aName = teamName;
+      const bName = getTeamName(targetKey);
+      if (shields[targetKey] > 0){
+        shields[targetKey]--;
+        updateScores();
+        setLog(`🛡️ ${bName}'s shield BLOCKED ${aName}'s steal!`);
+        try { await playSfx("shield"); } catch (_) {}
+        showPopup("shield", "🛡️ BLOCKED!", `${bName}'s shield stopped ${aName}'s steal`, "#7cc4ff", "SHIELD", true);
+        return false;
+      }
+      // Take, don't trade: victim's points are ADDED to the thief; victim drops to 0.
+      const stolen = scores[targetKey];
+      flyPoints(els[`team${targetKey}Score`], els[`team${activeTeam}Score`], `+${stolen}`, "#b794f4");
+      scores[activeTeam] += stolen;
+      scores[targetKey] = 0;
+      updateScores();
+      setLog(`🐉 ${aName} stole ${stolen} points from ${bName}!`);
+      try { await playSfx("bankrupt"); } catch (_) {}
+      showPopup("steal", "🐉 STEAL!", `${aName} stole ${stolen} points from ${bName}!`, "#b794f4", "STEAL", true);
+      return false;
+    }
+
+    if (label === "SHIELD"){
+      shields[activeTeam]++;
+      updateScores();
+      setLog(`🛡️ ${teamName} gained a shield! Protected from the next BANKRUPT or steal.`);
+      try { await playSfx("shield"); } catch (_) {}
+      showPopup("shield", "🛡️ SHIELD!", `${teamName} is protected from the next BANKRUPT or steal`, "#7cc4ff", "SHIELD", true);
+      return false;
+    }
+
+    if (label === "FACE_OFF"){
+      setLog("⚔️ FACE OFF! 20-second challenge — pick the winner.");
+      showPopup("faceoff", "⚔️ FACE OFF!", "20-second challenge", "#ffd24a", "FACE_OFF", false);
+      try { await playSfx("faceoff"); } catch (_) {}
+
+      const winner = await pickFaceOffWinner();
+      flyPoints(fromEl, els[`team${winner}Score`], "+2000");
+      scores[winner] += 2000;
+      updateScores();
+      const winnerName = getTeamName(winner);
+      setLog(`⚔️ ${winnerName} won the face-off! +2000`);
+      try { await playSfx("coin"); } catch (_) {}
+      showPopup("money", `⚔️ +2000`, `${winnerName} won the face-off!`, "var(--accent)", "FACE_OFF", true);
+      return false;
+    }
+
+    const value = Number(label);
+    if (!Number.isFinite(value)) return false;
+
+    flyPoints(fromEl, els[`team${activeTeam}Score`], `+${value}`);
+    scores[activeTeam] += value;
+    updateScores();
+    setLog(`${teamName} gained +${value}.`);
+    await playSfx("coin");
+    showPopup("money", `+${value}`, "points", "var(--accent)", String(value), true);
+    return false;
+  }
+
+  // ======== TURN FLOW (operator) ========
+  function overlayOpen(el){ return !el.classList.contains("hidden"); }
+  function anyBlockingOverlay(){
+    return overlayOpen(els.startOverlay) || overlayOpen(els.settingsOverlay) ||
+           overlayOpen(els.faceOffOverlay) || overlayOpen(els.stealOverlay) ||
+           currentPopup != null;
+  }
+  function canSpin(){
+    return started && !turnLock && spin.phase !== "spinning" && wheel.length > 0 &&
+           !winnerShown && !anyBlockingOverlay();
+  }
+  function updateControls(){
+    if (isPresentMode) return;
+    const spinning = spin.phase === "spinning";
+    els.spinBtn.disabled = !started || turnLock || spinning || !wheel.length || winnerShown;
+    els.stopBtn.disabled = !spinning;
+    els.toggleTeamBtn.disabled = !started || turnLock;
+    els.undoBtn.disabled = undoStack.length === 0 || turnLock || spinning;
+  }
+
+  function isEditable(t){
+    return !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "")));
+  }
+
+  function startSpin(){
+    if (isPresentMode || !canSpin()) return false;
+    // A caret left in a team-name field would swallow the buzzer's "1"
+    if (isEditable(document.activeElement)) document.activeElement.blur();
+    try { ensureAudioAwake(); } catch (_) {}
+    const t0 = Date.now();
+    spin = {
+      phase: "spinning",
+      a0: norm360(spin.angle || 0),
+      vel: (SPIN_SPEEDS[settings.spinSpeed] || SPIN_SPEEDS.medium) / 1000, // deg per ms
+      t0,
+      angle: spin.angle || 0,
+      seq: t0,
+    };
+    landedId = null;
+    setLanded(null);
+    lastTickIdx = -1;
+    ensureSpinLoop();
+    updateControls();
+    setLog(`🎡 Spinning for ${getTeamName(activeTeam)} — hit the buzzer!`);
+    broadcastState();
+    return true;
+  }
+
+  // The single entry point for every stop request: local buzzer key, presenter
+  // buzzer key (via the sync channel), or the manual Stop button. `t` is the moment
+  // the buzz physically happened, so message latency can't shift the landing wedge.
+  function handleBuzz(t){
+    if (isPresentMode || !started) return false;
+    if (spin.phase !== "spinning" || turnLock) return false;       // only a live spin can be stopped
+    if (overlayOpen(els.settingsOverlay) || overlayOpen(els.faceOffOverlay) ||
+        overlayOpen(els.stealOverlay) || currentPopup != null) return false; // never while a popup/picker is open
+    const now = Date.now();
+    if (!(t >= spin.t0 && t <= now + 50)) t = now;
+    if (t - spin.t0 < BUZZ_ARM_MS) return false;
+    resolveSpin(t);
+    return true;
+  }
+
+  async function resolveSpin(t){
+    const epoch = gameEpoch;
+    const stale = () => epoch !== gameEpoch;
+
+    // --- INSTANT stop: no coast. The landing wedge is pure math from the spin params. ---
+    const ang = norm360(angleAt(t));
+    const wedge = wheel[indexAtAngle(ang)];
+    spin = { ...spin, phase: "stopped", angle: ang };
+    turnLock = true;
+    landedId = wedge.id;
+    stopSpinLoop();
+    setTheta(ang);
+    stopJuice();
+    playStopThunk();
+    setLanded(landedId);
+
+    undoStack.push({
+      wheel: wheel.map(w => ({ ...w })),
+      offset: wheelOffset,
+      team: activeTeam,
+      label: wedge.label,
+      prevScores: { ...scores },
+      prevShields: { ...shields },
+    });
+    setLog(`🛑 ${getTeamName(activeTeam)} landed on ${niceLabel(wedge.label)}`);
+    updateControls();
+    broadcastState();
+
+    try {
+      await wait(LAND_BEAT_MS);
+      if (stale()) return;
+
+      let keepTurn = false;
+      try { keepTurn = await applyOutcome(wedge.label); } catch (_) {}
+      if (stale()) return;
+
+      // Let the outcome popup play out fully before touching the wheel — the
+      // regrow is a centerpiece and must not happen hidden behind a popup.
+      await wait(popupAutoCloseMs + 250);
+      if (stale()) return;
+      hidePopup();
+
+      // Shatter the consumed wedge
+      removingId = wedge.id;
+      broadcastState();
+      shatterWedge(wedge.id);
+      playShatter();
+      await wait(SHATTER_MS + 60);
+      if (stale()) return;
+
+      // Remove it and let the survivors grow into the gap
+      removeWedge(wedge.id);
+      removingId = null;
+      landedId = null;
+      setLanded(null);
+      syncWheelView(true);
+      broadcastState();
+      await wait(wheel.length ? RELAYOUT_MS + 120 : 450);
+      if (stale()) return;
+
+      spin = { ...spin, phase: "idle" };
+      if (!wheel.length){
+        showWinner();
+      } else if (keepTurn){
+        setLog(`🔁 ${getTeamName(activeTeam)} spins again!`);
+      } else {
+        activeTeam = nextTeam(activeTeam);
+        setLog(`Now spinning: ${getTeamName(activeTeam)}`);
+      }
+    } finally {
+      if (!stale()){
+        if (spin.phase === "stopped") spin = { ...spin, phase: "idle" };
+        turnLock = false;
+        updateScores();
+        updateControls();
+      }
+    }
+  }
+
+  // Drop a wedge and re-anchor the layout so the gap closes symmetrically: both
+  // neighbours slide in toward the hole while the point opposite it stays put.
+  function removeWedge(id){
+    const k = wheel.findIndex(w => w.id === id);
+    if (k < 0) return;
+    const n = wheel.length;
+    if (n > 1){
+      const a = 360 / n, a2 = 360 / (n - 1);
+      wheelOffset = norm360(wheelOffset + (k + 0.5) * a - k * a2);
+    }
+    wheel.splice(k, 1);
+  }
+
+  function showWinner(){
+    winnerShown = true;
+    hidePopup();
+    const keys = activeTeamKeys();
+    const max = Math.max(...keys.map(k => scores[k]));
+    const winners = keys.filter(k => scores[k] === max);
+    const finalLine = keys.map(k => `${getTeamName(k)}: ${scores[k]}`).join(" · ");
+
+    let title;
+    if (winners.length === 1){
+      title = `${getTeamName(winners[0])} WINS!`;
+    } else if (winners.length === keys.length){
+      title = `IT'S A TIE!`;
+    } else {
+      title = `TIE: ${winners.map(getTeamName).join(" & ")}`;
+    }
+
+    if (audio.ready) startWinnerMusic();
+    showPopup("winner", title, finalLine, "var(--accent)", "WINNER", false);
+    setLog(`Wheel complete. ${title}`);
+  }
+
+  // New wheel = fresh game. Nothing carries over.
+  function newWheel(){
+    gameEpoch++;
+    stopSpinLoop();
+    const count = WHEEL_PRESETS[settings.wheelSize]?.count ?? 20;
+    wheel = buildDeck(count).map(label => ({ id: ++wedgeUid, label }));
+    wheelOffset = wheel.length ? norm360(-180 / wheel.length) : 0; // pointer starts centred on a wedge
+    spin = { phase: "idle", a0: 0, vel: 0, t0: 0, angle: 0, seq: 0 };
+    setTheta(0);
+    landedId = null;
+    removingId = null;
+    turnLock = false;
+    winnerShown = false;
+    scores = { A: 0, B: 0, C: 0, D: 0 };
+    shields = { A: 0, B: 0, C: 0, D: 0 };
+    activeTeam = "A";
+    undoStack.length = 0;
+    hidePopup();
+    for (const [, v] of view) v.g.remove();
+    view.clear();
+    els.shardLayer.innerHTML = "";
+    setLanded(null);
+    syncWheelView(true);
+    updateScores();
+    updateControls();
+    setLog("New wheel ready. Ask a question 😄");
+    if (audio.ready) startBgMusic();
+  }
+
+  function toggleTeam(){
+    if (turnLock) return;
+    activeTeam = nextTeam(activeTeam);
+    updateScores();
+    setLog(`Now spinning: ${getTeamName(activeTeam)}`);
+  }
+
+  function resetScores(){
+    scores = { A: 0, B: 0, C: 0, D: 0 };
+    shields = { A: 0, B: 0, C: 0, D: 0 };
+    undoStack.length = 0;
+    updateScores();
+    updateControls();
+    setLog("Scores reset.");
+  }
+
+  function undoLast(){
+    if (turnLock || spin.phase === "spinning") return;
+    const last = undoStack.pop();
+    if (!last) return;
+
+    for (const k of TEAM_KEYS){
+      scores[k] = last.prevScores[k];
+      shields[k] = last.prevShields[k];
+    }
+    activeTeam = last.team;
+    wheel = last.wheel.map(w => ({ ...w }));
+    wheelOffset = last.offset;
+    landedId = null;
+    removingId = null;
+    winnerShown = false;
+    hidePopup();
+    if (audio.ready) startBgMusic();
+
+    setLanded(null);
+    syncWheelView(true); // the restored wedge grows back in
+    updateScores();
+    updateControls();
+    setLog(`Undid last spin for ${getTeamName(last.team)}.`);
+  }
+
+  // ======== JUICE HELPERS ========
+  // Score count-up. Snaps when hidden and carries a failsafe — the score display
+  // must never be left showing a stale number (Kingdom Clash gotcha #3).
+  const scoreAnims = new WeakMap();
+  function animateScoreTo(el, target){
+    if (!el) return;
+    target = Number(target) || 0;
+    const parsed = parseInt(String(el.textContent).replace(/[^\d-]/g, ""), 10);
+    const from = Number.isFinite(parsed) ? parsed : 0;
+    const prev = scoreAnims.get(el);
+    if (prev){
+      // Already counting toward this value — let it finish instead of restarting
+      if (prev.target === target) return;
+      cancelAnimationFrame(prev.raf); clearTimeout(prev.failsafe); scoreAnims.delete(el);
+    }
+    if (from === target){ el.textContent = String(target); return; }
+    if (document.hidden || typeof requestAnimationFrame !== "function"){
+      el.textContent = String(target);
+      return;
+    }
+    const dur = 700;
+    const t0 = performance.now();
+    const state = { target };
+    state.failsafe = setTimeout(() => {
+      if (scoreAnims.get(el) === state){
+        cancelAnimationFrame(state.raf);
+        scoreAnims.delete(el);
+        el.textContent = String(target);
+      }
+    }, dur + 500);
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = String(Math.round(from + (target - from) * eased));
+      if (p < 1){
+        state.raf = requestAnimationFrame(step);
+      } else {
+        clearTimeout(state.failsafe);
+        el.textContent = String(target);
+        scoreAnims.delete(el);
+        if (el.animate){
+          el.animate(
+            [{ transform:"scale(1)" }, { transform:"scale(1.22)", offset:0.4 }, { transform:"scale(1)" }],
+            { duration:320, easing:"cubic-bezier(.2,.85,.2,1)" }
+          );
+        }
+      }
+    };
+    state.raf = requestAnimationFrame(step);
+    scoreAnims.set(el, state);
+  }
+
+  function flyPoints(fromEl, toEl, text, color){
+    if (!fromEl || !toEl || !document.body.animate || document.hidden) return;
+    const a = fromEl.getBoundingClientRect();
+    const b = toEl.getBoundingClientRect();
+    if ((!a.width && !a.height) || (!b.width && !b.height)) return;
+    const fly = document.createElement("div");
+    fly.className = "flyPoint";
+    fly.textContent = text;
+    if (color) fly.style.color = color;
+    document.body.appendChild(fly);
+    const fr = fly.getBoundingClientRect();
+    const sx = a.left + a.width/2 - fr.width/2,  sy = a.top + a.height/2 - fr.height/2;
+    const ex = b.left + b.width/2 - fr.width/2,  ey = b.top + b.height/2 - fr.height/2;
+    fly.animate([
+      { transform:`translate(${sx}px, ${sy}px) scale(0.85)`, opacity:0 },
+      { transform:`translate(${sx}px, ${sy + 14}px) scale(1.18)`, opacity:1, offset:0.25 },
+      { transform:`translate(${ex}px, ${ey}px) scale(0.72)`, opacity:0.9 }
+    ], { duration:750, easing:"cubic-bezier(.3,.7,.4,1)" }).onfinish = () => fly.remove();
+    setTimeout(() => fly.remove(), 1400); // failsafe if onfinish never fires (throttled tab)
+  }
+
+  function x2SplitEffect(teamKey){
+    const el = els[`team${teamKey}Score`];
+    if (!el || !el.animate || document.hidden) return;
+    const r = el.getBoundingClientRect();
+    if (!r.width) return;
+    for (const dir of [-1, 1]){
+      const ghost = document.createElement("div");
+      ghost.className = "flyPoint";
+      ghost.style.color = "var(--good)";
+      ghost.textContent = el.textContent;
+      document.body.appendChild(ghost);
+      const gr = ghost.getBoundingClientRect();
+      const cx = r.left + r.width/2 - gr.width/2;
+      const cy = r.top + r.height/2 - gr.height/2;
+      ghost.animate([
+        { transform:`translate(${cx}px, ${cy}px) scale(1)`, opacity:0.9 },
+        { transform:`translate(${cx + dir*48}px, ${cy - 28}px) scale(1.06)`, opacity:1, offset:0.5 },
+        { transform:`translate(${cx}px, ${cy}px) scale(0.9)`, opacity:0 }
+      ], { duration:650, easing:"ease-in-out" }).onfinish = () => ghost.remove();
+      setTimeout(() => ghost.remove(), 1300);
+    }
+  }
+
+  function bankruptFx(){
+    document.body.classList.remove("bankruptFx");
+    void document.body.offsetWidth;
+    document.body.classList.add("bankruptFx");
+    const flash = document.createElement("div");
+    flash.className = "redFlash";
+    document.body.appendChild(flash);
+    setTimeout(() => {
+      flash.remove();
+      document.body.classList.remove("bankruptFx");
+    }, 700);
+  }
+
+  function applyActiveGlow(){
+    for (const k of TEAM_KEYS){
+      const box = document.querySelector(`.teamBox-${k}`);
+      if (box) box.classList.toggle("activeGlow", k === activeTeam);
+    }
+  }
+
+  function renderShieldBadges(){
+    for (const k of TEAM_KEYS){
+      const n = shields[k] || 0;
+      const text = n > 1 ? `🛡️×${n}` : (n === 1 ? "🛡️" : "");
+      els[`team${k}Shield`].textContent = text;
+      els[`phTeam${k}Shield`].textContent = text;
+    }
+  }
+
+  function updateScores(){
+    for (const k of TEAM_KEYS) animateScoreTo(els[`team${k}Score`], scores[k]);
+    els.activeTeamBadge.textContent = `Active: ${getTeamName(activeTeam)}`;
+    applyActiveGlow();
+    renderShieldBadges();
+    broadcastState();
+  }
+
+  // ======== SETTINGS UI ========
+  function openSettings(){
+    applySettingsToUI();
+    els.settingsOverlay.classList.remove("hidden");
+    els.settingsOverlay.setAttribute("aria-hidden", "false");
+  }
+  function closeSettings(){
+    els.settingsOverlay.classList.add("hidden");
+    els.settingsOverlay.setAttribute("aria-hidden", "true");
+  }
+
+  // Blur after click so a later spacebar press can't re-activate a focused button
+  function onTap(el, fn){ el.addEventListener("click", (e) => { el.blur(); fn(e); }); }
+
+  onTap(els.spinBtn, () => startSpin());
+  onTap(els.stopBtn, () => handleBuzz(Date.now())); // buzzer-failure fallback
+  onTap(els.toggleTeamBtn, toggleTeam);
+  onTap(els.undoBtn, () => { if (started) undoLast(); });
+  onTap(els.settingsBtn, openSettings);
+  onTap(els.closeSettingsBtn, closeSettings);
+
+  for (const k of TEAM_KEYS) els[`team${k}Name`].addEventListener("input", updateScores);
+
+  els.settingsOverlay.addEventListener("click", (e)=>{ if (e.target === els.settingsOverlay) closeSettings(); });
+
+  els.musicVol.addEventListener("input", () => {
+    settings.musicVol = parseInt(els.musicVol.value, 10);
+    els.musicVolVal.textContent = String(settings.musicVol);
+    saveSettings();
+    applySettingsToAudio();
+  });
+  els.sfxVol.addEventListener("input", () => {
+    settings.sfxVol = parseInt(els.sfxVol.value, 10);
+    els.sfxVolVal.textContent = String(settings.sfxVol);
+    saveSettings();
+    applySettingsToAudio();
+  });
+
+  // Wheel-related dropdowns just store the choice — the new wheel appears on Apply.
+  els.wheelSizeSelect.addEventListener("change", () => {
+    const v = WHEEL_PRESETS[els.wheelSizeSelect.value] ? els.wheelSizeSelect.value : "20";
+    settings.wheelSize = v;
+    els.wheelSizeVal.textContent = WHEEL_PRESETS[v].label;
+    saveSettings();
+  });
+
+  function wireCountSelect(el, key){
+    el.addEventListener("change", () => {
+      const n = parseInt(el.value, 10);
+      const clamped = Number.isFinite(n) && n >= 0 && n <= 3 ? n : defaultSettings[key];
+      settings[key] = clamped;
+      el.value = String(clamped);
+      saveSettings();
+    });
+  }
+  wireCountSelect(els.bankruptCountSelect, "bankruptCount");
+  wireCountSelect(els.doubleCountSelect,   "doubleCount");
+  wireCountSelect(els.stealCountSelect,    "stealCount");
+  wireCountSelect(els.faceOffCountSelect,  "faceOffCount");
+  wireCountSelect(els.shieldCountSelect,   "shieldCount");
+
+  els.teamCountSelect.addEventListener("change", () => {
+    const n = parseInt(els.teamCountSelect.value, 10);
+    const clamped = (n === 2 || n === 3 || n === 4) ? n : defaultSettings.teamCount;
+    settings.teamCount = clamped;
+    els.teamCountSelect.value = String(clamped);
+    els.teamCountVal.textContent = String(clamped);
+    saveSettings();
+  });
+
+  els.spinSpeedSelect.addEventListener("change", () => {
+    const v = SPIN_SPEEDS[els.spinSpeedSelect.value] ? els.spinSpeedSelect.value : "medium";
+    settings.spinSpeed = v;
+    els.spinSpeedVal.textContent = SPIN_SPEED_LABEL[v];
+    saveSettings();
+  });
+
+  function applyPendingSettings(){
+    teamCount = settings.teamCount;
+    applyTeamCountLayout();
+    newWheel();
+    closeSettings();
+    setLog("Settings applied — fresh wheel ready.");
+  }
+  onTap(els.applySettingsBtn, applyPendingSettings);
+
+  onTap(els.defaultsBtn, () => {
+    settings = { ...defaultSettings };
+    saveSettings();
+    teamCount = settings.teamCount;
+    applySettingsToUI();
+    applySettingsToAudio();
+    applyTeamCountLayout();
+    newWheel();
+    setLog("Settings reset to defaults — fresh wheel ready.");
+  });
+
+  onTap(els.testSfxBtn, () => playSfx("coin"));
+  onTap(els.newWheelBtn, () => { newWheel(); closeSettings(); });
+  onTap(els.resetScoresBtn, resetScores);
+
+  onTap(els.muteBtn, () => {
+    muted = !muted;
+    setMuteUI();
+    applySettingsToAudio();
+    if (!muted && audio.ready) ensureMusicPlaying();
+    setLog(muted ? "Sound muted." : "Sound on.");
+  });
+
+  els.overlay.addEventListener("click", hidePopup);
+
+  onTap(els.startBtn, async () => {
+    if (started) return;
+    els.startHint.textContent = "";
+    try{
+      await ensureAudioAwake();
+      started = true;
+      els.settingsBtn.disabled = false;
+      els.presentBtn.disabled = false;
+      applySettingsToUI();
+      setMuteUI();
+      els.startOverlay.classList.add("hidden");
+      els.startOverlay.setAttribute("aria-hidden", "true");
+      newWheel();
+      setLog("Ready! Press SPIN (or Space), then hit the buzzer.");
+    } catch (err){
+      els.startHint.textContent = String(err?.message || err || "Unknown error");
+    }
+  });
+
+  // ======== KEYBOARD: BUZZER + SPACEBAR ========
+  // Keystrokes only reach the focused window, and focus may be on either one — so
+  // BOTH windows listen. The operator acts directly; the presenter forwards the
+  // event (with its timestamp) over the sync channel.
+  let lastBuzzKeyAt = 0;
+
+  function sendCommand(cmd){
+    const msg = { type: 'CMD', ...cmd, nonce: Math.random().toString(36).slice(2) + Date.now() };
+    if (syncChannel){ try { syncChannel.postMessage(msg); } catch (_) {} }
+    try { localStorage.setItem(LS_CMD_KEY, JSON.stringify(msg)); } catch (_) {}
+  }
+
+  function onBuzzKey(t){
+    if (!isPresentMode){ handleBuzz(t); return; }
+    // Presenter: only forward when its mirrored state says a spin is live
+    if (spin.phase !== "spinning" || currentPopup != null) return;
+    if (t - spin.t0 < BUZZ_ARM_MS) return;
+    if (optimisticStop && optimisticStop.seq === spin.seq) return;
+    const ang = norm360(angleAt(t));
+    optimisticStop = { seq: spin.seq, angle: ang, until: Date.now() + 1200 };
+    setTheta(ang);
+    els.pointer.classList.remove("ticking");
+    stopJuice();
+    const w = wheel[indexAtAngle(ang)];
+    if (w) setLanded(w.id);
+    sendCommand({ cmd: 'buzz', t, seq: spin.seq });
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    if (e.key === BUZZ_KEY){
+      // Outside a live spin, let "1" be typed normally into a team name / field
+      if (spin.phase !== "spinning" && isEditable(e.target)) return;
+      e.preventDefault();
+      const now = Date.now();
+      const prev = lastBuzzKeyAt;
+      lastBuzzKeyAt = now;
+      // Held key or hammering: every press inside the window is swallowed, and
+      // each one extends it — a mash that began before the spin can't stop it.
+      if (e.repeat || now - prev < BUZZ_DEDUP_MS) return;
+      onBuzzKey(now);
+      return;
+    }
+
+    if (e.code === "Space" || e.key === " "){
+      if (isEditable(e.target)) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      if (isPresentMode) sendCommand({ cmd: 'spin' });
+      else startSpin();
+    }
+  }, true);
+  // Stop the keyup from "clicking" whatever button still has focus
+  window.addEventListener("keyup", (e) => {
+    if ((e.code === "Space" || e.key === " ") && !isEditable(e.target)) e.preventDefault();
+  }, true);
+
+  // ======== SYNC: OPERATOR → PRESENTER STATE ========
+  function broadcastState(){
+    if (isPresentMode || applyingRemoteState) return;
+    const teamNames = {};
+    for (const k of TEAM_KEYS) teamNames[k] = getTeamName(k);
+    const payload = {
+      type: 'STATE',
+      sid: SESSION_ID,
+      rev: ++stateRev,
+      wheel,
+      wheelOffset,
+      spin,          // spinStart(a0, vel, t0) / stop(angle) — events, never frames
+      landedId,
+      removingId,
+      scores,
+      shields,
+      activeTeam,
+      teamCount,
+      teamNames,
+      winnerShown,
+      started,
+      popup: currentPopup,
+      ts: Date.now(),
+    };
+    if (syncChannel){
+      try { syncChannel.postMessage(payload); } catch (_) {}
+    }
+    // Fallback: storage events fire in every other same-origin window, and the
+    // presenter also polls this key.
+    try { localStorage.setItem(LS_STATE_KEY, JSON.stringify(payload)); } catch (_) {}
+  }
+
+  function updatePresentBtn(){
+    const live = presenterWindow && !presenterWindow.closed;
+    els.presentBtn.textContent = live ? '✅ Presenting' : '📺 Present';
+    els.presentBtn.classList.toggle('live', !!live);
+  }
+
+  function openPresenter(){
+    if (presenterWindow && !presenterWindow.closed){
+      presenterWindow.focus();
+      return;
+    }
+    const url = location.href.split('?')[0].split('#')[0] + '?present';
+    presenterWindow = window.open(
+      url,
+      'kingdom-spin-presenter',
+      'width=1280,height=800,menubar=no,toolbar=no,location=no,status=no,scrollbars=no'
+    );
+    updatePresentBtn();
+    const poll = setInterval(() => {
+      if (presenterWindow && presenterWindow.closed){
+        clearInterval(poll);
+        presenterWindow = null;
+        updatePresentBtn();
+      }
+    }, 1000);
+  }
+  onTap(els.presentBtn, openPresenter);
+
+  // ---- Operator: receive presenter commands through all three paths ----
+  if (!isPresentMode){
+    let lastCmdNonce = null;
+    try {
+      const raw = localStorage.getItem(LS_CMD_KEY);
+      if (raw) lastCmdNonce = JSON.parse(raw).nonce; // ignore whatever was left from an earlier session
+    } catch (_) {}
+
+    const onCommand = (msg) => {
+      if (!msg || msg.type !== 'CMD' || msg.nonce === lastCmdNonce) return;
+      lastCmdNonce = msg.nonce;
+      if (msg.cmd === 'buzz'){
+        if (msg.seq === spin.seq) handleBuzz(Number(msg.t));
+      } else if (msg.cmd === 'spin'){
+        startSpin();
+      }
+    };
+
+    if (syncChannel){
+      syncChannel.onmessage = (e) => {
+        const d = e.data;
+        if (!d) return;
+        if (d.type === 'READY'){ broadcastState(); return; }
+        if (d.type === 'CMD') onCommand(d);
+      };
+    }
+    const readCmdKey = (raw) => { try { if (raw) onCommand(JSON.parse(raw)); } catch (_) {} };
+    window.addEventListener('storage', (e) => { if (e.key === LS_CMD_KEY) readCmdKey(e.newValue); });
+    setInterval(() => {
+      if (spin.phase !== "spinning" && !canSpin()) return;
+      try { readCmdKey(localStorage.getItem(LS_CMD_KEY)); } catch (_) {}
+    }, 120);
+  }
+
+  // ---- Presenter: mirror operator state ----
+  if (isPresentMode){
+    document.body.classList.add('present-mode');
+    els.startOverlay.classList.add('hidden');
+    els.presenterHud.classList.remove('hidden');
+
+    let lastSid = null, lastRev = -1;
+    let lastPopupKey = null;
+    let firstState = true;
+    let juicedSeq = null;
+
+    function renderPopupCountdown(label, warn, done){
+      let cd = els.popupAnim.querySelector('.popupCountdown');
+      if (!cd){
+        els.popupAnim.innerHTML = '';
+        cd = document.createElement('div');
+        cd.className = 'popupCountdown';
+        els.popupAnim.appendChild(cd);
+      }
+      cd.classList.toggle('warn', !!warn);
+      cd.classList.toggle('done', !!done);
+      els.overlay.classList.toggle('heartbeat', !!warn && !done);
+      const newText = String(label);
+      if (cd.textContent !== newText){
+        cd.textContent = newText;
+        if (cd.animate){
+          const peak = done ? 1.32 : (warn ? 1.28 : 1.18);
+          cd.animate(
+            [{ transform: 'scale(1)' }, { transform: `scale(${peak})`, offset: 0.35 }, { transform: 'scale(1)' }],
+            { duration: 360, easing: 'cubic-bezier(.2,.85,.2,1)' }
+          );
+        }
+      }
+    }
+
+    const wheelSig = (w, off) => (w || []).map(x => x.id + ":" + x.label).join(",") + "@" + Number(off || 0).toFixed(4);
+
+    function applyRemoteState(d){
+      if (!d || d.type !== 'STATE') return;
+      // The same payload arrives via BroadcastChannel, storage events AND polling
+      if (d.sid === lastSid && d.rev <= lastRev) return;
+      lastSid = d.sid; lastRev = d.rev;
+
+      applyingRemoteState = true;
+      try {
+        scores  = { A: 0, B: 0, C: 0, D: 0, ...(d.scores || {}) };
+        shields = { A: 0, B: 0, C: 0, D: 0, ...(d.shields || {}) };
+        activeTeam  = d.activeTeam;
+        winnerShown = !!d.winnerShown;
+        started     = !!d.started;
+        if (d.teamCount === 2 || d.teamCount === 3 || d.teamCount === 4){
+          teamCount = d.teamCount;
+          applyTeamCountLayout();
+        }
+        const names = d.teamNames || {};
+        for (const k of TEAM_KEYS){
+          const nm = names[k] != null ? names[k] : DEFAULT_TEAM_NAME[k];
+          els[`team${k}Name`].innerText = nm;
+          els[`phTeam${k}Name`].textContent = nm;
+          animateScoreTo(els[`phTeam${k}Score`], scores[k]);
+          const phBox = document.querySelector(`.phTeamBox-${k}`);
+          if (phBox) phBox.classList.toggle('activeGlow', k === d.activeTeam);
+        }
+        renderShieldBadges();
+
+        // --- Wheel: shatter, then regrow ---
+        if (d.removingId != null && d.removingId !== removingId) shatterWedge(d.removingId);
+        removingId = d.removingId;
+        const changed = wheelSig(d.wheel, d.wheelOffset) !== wheelSig(wheel, wheelOffset);
+        wheel = d.wheel || [];
+        wheelOffset = d.wheelOffset || 0;
+        if (changed || firstState) syncWheelView(!firstState);
+
+        // --- Spin events ---
+        spin = d.spin || spin;
+        if (spin.phase === "spinning"){
+          if (optimisticStop && optimisticStop.seq !== spin.seq) optimisticStop = null;
+          ensureSpinLoop();
+          if (document.hidden) setTheta(norm360(angleAt(Date.now())));
+        } else {
+          optimisticStop = null;
+          stopSpinLoop();
+          setTheta(spin.angle || 0);
+          if (spin.phase === "stopped" && juicedSeq !== spin.seq && !firstState) stopJuice();
+          if (spin.phase === "stopped") juicedSeq = spin.seq;
+        }
+        if (spin.phase === "spinning" && optimisticStop){
+          // locally frozen on our own buzz — keep showing that wedge until confirmed
+          juicedSeq = spin.seq;
+        } else {
+          landedId = d.landedId;
+          setLanded(landedId);
+        }
+
+        // --- Popup mirror (re-animate only when kind|title changes) ---
+        const popup = d.popup;
+        const popupKey = popup ? `${popup.kind}|${popup.title}` : null;
+        if (popupKey !== lastPopupKey){
+          lastPopupKey = popupKey;
+          if (popup){
+            showPopup(popup.kind, popup.title, popup.sub, popup.color, popup.imageKey, false);
+            if (popup.kind === 'bankrupt') bankruptFx();
+            if (popup.countdown != null){
+              renderPopupCountdown(popup.countdown, popup.countdownWarn, popup.countdownDone);
+            }
+          } else {
+            hidePopup();
+          }
+        } else if (popup){
+          if (els.popupSub.textContent !== popup.sub){
+            els.popupSub.textContent = popup.sub;
+            if (els.popupSub.animate){
+              els.popupSub.animate(
+                [{ transform: 'scale(1)' }, { transform: 'scale(1.14)', offset: 0.35 }, { transform: 'scale(1)' }],
+                { duration: 360, easing: 'cubic-bezier(.2,.85,.2,1)' }
+              );
+            }
+          }
+          if (popup.countdown != null){
+            renderPopupCountdown(popup.countdown, popup.countdownWarn, popup.countdownDone);
+          } else if (els.popupAnim.querySelector('.popupCountdown')){
+            showPopup(popup.kind, popup.title, popup.sub, popup.color, popup.imageKey, false);
+          }
+        }
+        firstState = false;
+      } finally {
+        applyingRemoteState = false;
+      }
+    }
+
+    // 1) BroadcastChannel
+    if (syncChannel){
+      syncChannel.onmessage = (e) => applyRemoteState(e.data);
+      syncChannel.postMessage({ type: 'READY' });
+    }
+    // 2) storage events
+    const readStateKey = () => {
+      try {
+        const raw = localStorage.getItem(LS_STATE_KEY);
+        if (raw) applyRemoteState(JSON.parse(raw));
+      } catch (_) {}
+    };
+    window.addEventListener('storage', (e) => {
+      if (e.key !== LS_STATE_KEY || !e.newValue) return;
+      try { applyRemoteState(JSON.parse(e.newValue)); } catch (_) {}
+    });
+    // Just opened: apply whatever state is already there
+    readStateKey();
+    // 3) polling fallback
+    setInterval(readStateKey, 500);
+  }
+
+  // A window that was hidden mid-spin has no rAF frames to catch up on — when it
+  // comes back, jump straight to where the math says the wheel is.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    if (spin.phase === "spinning") ensureSpinLoop();
+    else setTheta(spin.angle || 0);
+  });
+
+  // ======== INITIAL RENDER ========
+  buildBulbs();
+  applySettingsToUI();
+  applyTeamCountLayout();
+  setMuteUI();
+  if (!isPresentMode){
+    // Show a wheel behind the Start overlay; Start deals a fresh one.
+    const count = WHEEL_PRESETS[settings.wheelSize]?.count ?? 20;
+    wheel = buildDeck(count).map(label => ({ id: ++wedgeUid, label }));
+    wheelOffset = norm360(-180 / wheel.length);
+    syncWheelView(false);
+    updateScores();
+    updateControls();
+  }
+</script>
+</body>
+</html>
