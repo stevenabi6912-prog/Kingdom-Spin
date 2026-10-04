@@ -614,6 +614,45 @@
       50%{ background:rgba(140,22,22,0.62); }
     }
 
+    /* "Only bankrupts left" banner — tells the room the spinner is now aiming
+       the BANKRUPT at someone else */
+    .modeBanner{
+      position:absolute;
+      left:50%;
+      bottom:clamp(8px, 2svh, 22px);
+      transform:translateX(-50%);
+      z-index:4;
+      width:max-content;
+      max-width:94%;
+      padding:clamp(8px, 1.2vw, 14px) clamp(14px, 2.2vw, 30px);
+      border-radius:18px;
+      text-align:center;
+      background:rgba(120,12,12,0.92);
+      border:2px solid rgba(255,92,92,0.85);
+      color:#fff;
+      font-weight:1000;
+      line-height:1.15;
+      pointer-events:none;
+      animation:modeBannerIn 0.5s cubic-bezier(.2,.9,.3,1.3), modeBannerPulse 1.4s ease-in-out 0.5s infinite;
+    }
+    .modeBannerTop{
+      font-size:clamp(11px, 1.3vw, 18px);
+      letter-spacing:2px;
+      color:#ffb3b3;
+    }
+    .modeBannerMain{ font-size:clamp(16px, 2.2vw, 30px); }
+    .modeBannerMain b{ color:var(--accent); }
+    body.present-mode .modeBannerTop{ font-size:clamp(16px, 2.2vw, 34px); }
+    body.present-mode .modeBannerMain{ font-size:clamp(24px, 4.2vw, 68px); }
+    @keyframes modeBannerIn{
+      0%{ transform:translateX(-50%) scale(0.6); opacity:0; }
+      100%{ transform:translateX(-50%) scale(1); opacity:1; }
+    }
+    @keyframes modeBannerPulse{
+      0%,100%{ box-shadow:0 0 14px rgba(255,60,60,0.45); }
+      50%{ box-shadow:0 0 44px rgba(255,60,60,0.95); }
+    }
+
     /* PRESENTER MODE — panel hidden, stage takes the whole viewport minus the HUD */
     body.present-mode{ cursor:none; overflow:hidden; height:100svh; }
     body.present-mode .panel{ display:none !important; }
@@ -729,6 +768,10 @@
         </g>
       </svg>
     </div>
+    <div id="modeBanner" class="modeBanner hidden" aria-live="polite">
+      <div class="modeBannerTop">💥 ONLY BANKRUPTS LEFT 💥</div>
+      <div class="modeBannerMain" id="modeBannerMain"></div>
+    </div>
     <!-- Presenter score HUD (visible only in present mode) -->
     <div id="presenterHud" class="presenter-hud hidden teams-2">
       <div class="ph-team phTeamBox-A">
@@ -801,7 +844,7 @@
   <div id="stealOverlay" class="overlay hidden" aria-hidden="true">
     <div class="card" role="dialog" aria-modal="true">
       <div class="popupTop">
-        <div class="popupTitle" style="color:#b794f4;">🐉 STEAL!</div>
+        <div class="popupTitle" id="stealPickerTitle" style="color:#b794f4;">🐉 STEAL!</div>
         <div class="popupSub" id="stealPickerSub">Pick a team to steal from — or skip</div>
       </div>
       <div id="stealPickerButtons" class="pickerBtnGrid" style="margin-top:6px;"></div>
@@ -1069,7 +1112,10 @@
     faceOffStartTimer: $("faceOffStartTimer"),
     faceOffTimer: $("faceOffTimer"),
     stealOverlay: $("stealOverlay"),
+    stealPickerTitle: $("stealPickerTitle"),
     stealPickerSub: $("stealPickerSub"),
+    modeBanner: $("modeBanner"),
+    modeBannerMain: $("modeBannerMain"),
     stealPickerButtons: $("stealPickerButtons"),
     stealSkipBtn: $("stealSkipBtn"),
 
@@ -1956,12 +2002,20 @@
     });
   }
 
-  // STEAL target picker — resolves with the target team key or null on skip.
-  function pickStealTarget(){
+  // Target-team picker — resolves with the target team key, or null on skip.
+  // mode "steal": pick a victim or skip. mode "bankrupt" (only bankrupts left):
+  // the spinner must pick who gets bankrupted — no skip.
+  function pickStealTarget(mode = "steal"){
     return new Promise((resolve) => {
       if (isPresentMode){ resolve(nextTeam(activeTeam)); return; }
       const others = activeTeamKeys().filter(k => k !== activeTeam);
-      els.stealPickerSub.textContent = `${getTeamName(activeTeam)} — pick a team to steal from, or skip`;
+      const bankruptMode = mode === "bankrupt";
+      els.stealPickerTitle.textContent = bankruptMode ? "💥 BANKRUPT!" : "🐉 STEAL!";
+      els.stealPickerTitle.style.color = bankruptMode ? "#ff5c5c" : "#b794f4";
+      els.stealPickerSub.textContent = bankruptMode
+        ? `${getTeamName(activeTeam)} — pick a team to BANKRUPT`
+        : `${getTeamName(activeTeam)} — pick a team to steal from, or skip`;
+      els.stealSkipBtn.classList.toggle('hidden', bankruptMode);
       els.stealPickerButtons.innerHTML = '';
 
       const onSkip = () => { cleanup(); resolve(null); };
@@ -1974,7 +2028,7 @@
       for (const k of others){
         const b = document.createElement('button');
         b.type = 'button';
-        b.textContent = `Steal from ${getTeamName(k)}`;
+        b.textContent = bankruptMode ? `Bankrupt ${getTeamName(k)}` : `Steal from ${getTeamName(k)}`;
         b.addEventListener('click', () => { cleanup(); resolve(k); });
         els.stealPickerButtons.appendChild(b);
       }
@@ -1984,11 +2038,56 @@
     });
   }
 
+  // ======== "ONLY BANKRUPTS LEFT" MODE ========
+  function onlyBankruptsLeft(){
+    return wheel.length > 0 && wheel.every(w => w.label === "BANKRUPT");
+  }
+  // Runs in both windows off the same mirrored state. Hidden while a turn is
+  // resolving (phase "stopped") so it never names the wrong spinner mid-handoff.
+  function updateModeBanner(){
+    const show = onlyBankruptsLeft() && !winnerShown && spin.phase !== "stopped";
+    els.modeBanner.classList.toggle("hidden", !show);
+    if (!show) return;
+    const esc = (t) => String(t).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+    const spinner = esc(getTeamName(activeTeam));
+    const target = teamCount === 2 ? `<b>${esc(getTeamName(nextTeam(activeTeam)))}</b>` : "<b>another team</b>";
+    const html = `<b>${spinner}</b> is spinning to BANKRUPT ${target}!`;
+    if (els.modeBannerMain.innerHTML !== html) els.modeBannerMain.innerHTML = html;
+  }
+
   // ======== OUTCOMES ========
   // Applies to the active team, good or bad. Returns true if the team keeps the turn.
   async function applyOutcome(label){
     const teamName = getTeamName(activeTeam);
     const fromEl = els.pointer; // points fly from the pointer to the score box
+
+    if (label === "BANKRUPT" && onlyBankruptsLeft()){
+      // Endgame twist: with nothing but BANKRUPTs on the wheel, the spinner's buzz
+      // bankrupts ANOTHER team. 2 teams → the other one; 3+ → the spinner picks.
+      let victim;
+      if (teamCount === 2){
+        victim = nextTeam(activeTeam);
+      } else {
+        showPopup("bankruptpick", "💥 BANKRUPT!", `${teamName} is choosing who to bankrupt…`, "var(--danger)", "BANKRUPT", false);
+        victim = await pickStealTarget("bankrupt");
+      }
+      const victimName = getTeamName(victim);
+      if (shields[victim] > 0){
+        shields[victim]--;
+        updateScores();
+        setLog(`🛡️ ${victimName}'s shield BLOCKED the bankrupt from ${teamName}!`);
+        try { await playSfx("shield"); } catch (_) {}
+        showPopup("shield", "🛡️ BLOCKED!", `${victimName}'s shield absorbed ${teamName}'s BANKRUPT`, "#7cc4ff", "SHIELD", true);
+        return false;
+      }
+      bankruptFx();
+      scores[victim] = 0;
+      updateScores();
+      setLog(`💥 ${teamName} BANKRUPTED ${victimName}! Score reset to 0.`);
+      await playSfx("bankrupt");
+      showPopup("bankrupt", "BANKRUPT", `${teamName} bankrupted ${victimName}!`, "var(--danger)", "BANKRUPT", true);
+      return false;
+    }
 
     if (label === "BANKRUPT"){
       if (shields[activeTeam] > 0){
@@ -2676,6 +2775,7 @@
   // ======== SYNC: OPERATOR → PRESENTER STATE ========
   function broadcastState(){
     if (isPresentMode || applyingRemoteState) return;
+    updateModeBanner(); // every operator-side state change funnels through here
     const teamNames = {};
     for (const k of TEAM_KEYS) teamNames[k] = getTeamName(k);
     const payload = {
@@ -2891,6 +2991,7 @@
             showPopup(popup.kind, popup.title, popup.sub, popup.color, popup.imageKey, false);
           }
         }
+        updateModeBanner();
         firstState = false;
       } finally {
         applyingRemoteState = false;
