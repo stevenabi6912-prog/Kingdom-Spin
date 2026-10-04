@@ -653,6 +653,23 @@
       50%{ box-shadow:0 0 44px rgba(255,60,60,0.95); }
     }
 
+    /* Shown when the operator and presenter windows are running different builds */
+    .versionWarn{
+      position:fixed;
+      top:8px; left:50%;
+      transform:translateX(-50%);
+      z-index:100000;
+      max-width:94vw;
+      padding:10px 18px;
+      border-radius:12px;
+      background:#b00020;
+      border:2px solid #fff;
+      color:#fff;
+      font-weight:1000;
+      font-size:clamp(14px, 1.8vw, 24px);
+      text-align:center;
+    }
+
     /* PRESENTER MODE — panel hidden, stage takes the whole viewport minus the HUD */
     body.present-mode{ cursor:none; overflow:hidden; height:100svh; }
     body.present-mode .panel{ display:none !important; }
@@ -800,6 +817,10 @@
     </div>
   </div>
 
+  <div id="versionWarn" class="versionWarn hidden" role="alert">
+    ⚠️ The operator and presenter windows are running different versions — hard-refresh BOTH windows before playing.
+  </div>
+
   <!-- START OVERLAY -->
   <div id="startOverlay" class="overlay" aria-hidden="false">
     <div class="card" role="dialog" aria-modal="true">
@@ -856,7 +877,7 @@
   <div id="settingsOverlay" class="overlay hidden" aria-hidden="true">
     <div class="card" role="dialog" aria-modal="true">
       <div class="row">
-        <div class="bigTitle">Kingdom Spin Settings</div>
+        <div class="bigTitle">Kingdom Spin Settings <span id="buildTag" class="smallNote" style="font-weight:700;"></span></div>
         <button id="closeSettingsBtn" type="button" style="padding:8px 10px;border-radius:12px;">Close</button>
       </div>
 
@@ -974,6 +995,11 @@
   <audio id="musicWinEl" src="winner-music.mp3" preload="auto" loop playsinline></audio>
 
 <script>
+  // Bump on every deploy. Both windows compare builds over the sync channel: a stale
+  // operator tab paired with a fresh presenter (or vice versa) silently runs old
+  // rules while the other screen shows new ones — so make the mismatch loud.
+  const BUILD = "4";
+
   // ======== CONFIG ========
   const WHEEL_PRESETS = {
     "20": { count: 20, label: "20 wedges" },
@@ -2772,6 +2798,9 @@
     if ((e.code === "Space" || e.key === " ") && !isEditable(e.target)) e.preventDefault();
   }, true);
 
+  function showVersionWarn(){ $("versionWarn").classList.remove("hidden"); }
+  $("buildTag").textContent = `· build ${BUILD}`;
+
   // ======== SYNC: OPERATOR → PRESENTER STATE ========
   function broadcastState(){
     if (isPresentMode || applyingRemoteState) return;
@@ -2780,6 +2809,7 @@
     for (const k of TEAM_KEYS) teamNames[k] = getTeamName(k);
     const payload = {
       type: 'STATE',
+      build: BUILD,
       sid: SESSION_ID,
       rev: ++stateRev,
       wheel,
@@ -2855,7 +2885,11 @@
       syncChannel.onmessage = (e) => {
         const d = e.data;
         if (!d) return;
-        if (d.type === 'READY'){ broadcastState(); return; }
+        if (d.type === 'READY'){
+          if (d.build !== BUILD) showVersionWarn();
+          broadcastState();
+          return;
+        }
         if (d.type === 'CMD') onCommand(d);
       };
     }
@@ -2906,6 +2940,7 @@
 
     function applyRemoteState(d){
       if (!d || d.type !== 'STATE') return;
+      if (d.build !== BUILD) showVersionWarn();
       // The same payload arrives via BroadcastChannel, storage events AND polling
       if (d.sid === lastSid && d.rev <= lastRev) return;
       lastSid = d.sid; lastRev = d.rev;
@@ -3001,7 +3036,7 @@
     // 1) BroadcastChannel
     if (syncChannel){
       syncChannel.onmessage = (e) => applyRemoteState(e.data);
-      syncChannel.postMessage({ type: 'READY' });
+      syncChannel.postMessage({ type: 'READY', build: BUILD });
     }
     // 2) storage events
     const readStateKey = () => {
